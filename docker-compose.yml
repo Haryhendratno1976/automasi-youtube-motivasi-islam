@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: motivation_web_dashboard
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_SECRET_KEY=a784e8dc18737cd39e78deaaca18ded5c09ffefaf772a19752133adf1059cd3c
+      - DASHBOARD_USERNAME=admin
+      - DASHBOARD_PASSWORD=admin123
+      - TELEGRAM_BOT_TOKEN=8930666482:AAHCDlCZhWC6H7PTJcNsaiSxx6t9AgdJ-IQ
+      - TELEGRAM_CHAT_ID=79821129
+    volumes:
+      - ./assets:/app/assets
+      - ./config.yaml:/app/config.yaml
+
+  agent:
+    build: .
+    container_name: motivation_background_agent
+    restart: always
+    command: python main.py
+    environment:
+      - TELEGRAM_BOT_TOKEN=8930666482:AAHCDlCZhWC6H7PTJcNsaiSxx6t9AgdJ-IQ
+      - TELEGRAM_CHAT_ID=79821129
+
+    volumes:
+      - ./assets:/app/assets
+      - ./config.yaml:/app/config.yaml

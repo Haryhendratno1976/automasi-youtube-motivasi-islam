@@ -1,0 +1,100 @@
+# ============================================================
+# Konfigurasi AI Agent -- YouTube/TikTok Shorts Automation
+# ============================================================
+
+# --- 1. Riset topik (research.py) ---
+# Prioritas: Gemini AI (dinamis, ikut tren terkini sesuai niche di bawah).
+# Kalau GEMINI_API_KEY tidak diset/gagal, otomatis fallback ke bank topik
+# statis di dalam research.py (tetap jalan, cuma kurang variatif).
+research:
+  gemini_model: gemini-3.6-flash
+  niche:
+    id: "motivasi Islami dan edukasi agama Islam untuk kehidupan sehari-hari (akhlak, ibadah, muamalah)"
+    en: "Islamic motivation and Islamic education for everyday life (character, worship, practical wisdom)"
+ 
+  keywords:
+    id:
+      - "motivasi islami"
+      - "hijrah"
+      - "akhlak mulia"
+      - "sabar dan syukur"
+      - "tawakal"
+      - "kisah sahabat nabi"
+      - "adab islami"
+      - "muhasabah diri"
+    en:
+      - "islamic motivation"
+      - "muslim mindset"
+      - "prophetic wisdom"
+      - "patience in islam"
+      - "gratitude in islam"
+      - "companions of the prophet"
+      - "islamic character"
+      - "self reflection islam"
+
+  region:
+    id: "Indonesia dan Malaysia"
+    en: "Global Muslim audience (US, UK, international)"
+
+# --- 2. Script generator (script_generator.py) ---
+# Narasi + hook dibuat via ChatGPT. Kalau OPENAI_API_KEY kosong/gagal,
+# fallback ke template acak (3 varian/bahasa, tetap dipersonalisasi per topik).
+script_generator:
+  style:
+    id: "reflektif, hangat, dan menenangkan -- bukan menggurui/menghakimi"
+    en: "reflective, warm, and calming -- not preachy or judgmental""
+
+# --- 3. Video creator (creator.py) ---
+video_creator:
+  # Filter visual: TOLAK semua gambar/video yang menampilkan figur
+  # manusia sama sekali (bukan cuma wanita) -- ganti ke kaligrafi,
+  # masjid, alam, pola geometris. Ini SUPERSET dari avoid_women_in_visuals,
+  # jadi avoid_women_in_visuals tidak perlu diaktifkan lagi (redundant).
+  avoid_human_figures_in_visuals: true
+  avoid_women_in_visuals: false   # tidak perlu, sudah tercakup di atas
+  fps: 30
+  gemini_image_model: gemini-3.1-flash-image
+  # Persentase scene yang SENGAJA pakai gambar AI (bukan Pexels) walau
+  # Pexels tersedia -- mitigasi "visual uniqueness filter" YouTube 2026
+  # yang menurunkan ranking video ber-footage generik yang sama dipakai
+  # banyak kreator lain. 0.35 = 35% scene pakai gambar AI unik.
+  ai_image_ratio: 0.35
+  tts:
+    voices:
+      id: ["id-ID-ArdiNeural", "id-ID-GadisNeural"]
+      en: ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
+           "en-US-RogerNeural", "en-US-JennyNeural", "en-US-AriaNeural",
+           "en-US-AndrewNeural", "en-US-EmmaNeural"]
+  subtitles:
+    font_size: 60
+    font_color: "white"
+    stroke_color: "black"
+    stroke_width: 3
+    max_width: 900
+    safe_bottom_margin: 280
+    # Posisi teks vertikal, 0.0 = paling atas, 1.0 = paling bawah.
+    # Default sebelumnya 0.45 (tengah agak atas) -- diturunkan ~10% jadi
+    # 0.55 sesuai permintaan.
+    vertical_center_fraction: 0.55
+    # font: "/path/ke/font-custom.ttf"   # opsional, default auto-detect DejaVu/Liberation/FreeSans
+
+# --- 4. Jadwal posting (main.py) ---
+# Jadwal posting -- waktu ACAK di dalam tiap rentang, diacak ULANG setiap
+# hari (bukan jam tetap), supaya polanya tidak terlalu mekanis.
+# Mitigasi risiko kebijakan YouTube "inauthentic content" (2026) --
+# riset kebijakan berulang kali menyebut "human oversight"/"editorial
+# judgment" sebagai faktor yang membedakan channel yang selamat dari
+# yang di-terminate. Kalau diaktifkan, video TIDAK auto-upload -- masuk
+# antrian di dashboard (/review) dan perlu di-approve manual dulu.
+publishing:
+  require_manual_review: true
+
+schedule:
+  id:
+    time_ranges:
+      - ["16:30", "17:00"]
+      - ["05:00", "05:30"]
+  en:
+    time_ranges:
+      - ["06:30", "07:00"]
+      - ["18:00", "18:30"]

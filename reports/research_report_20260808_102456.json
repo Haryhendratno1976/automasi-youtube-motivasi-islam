@@ -1,0 +1,49 @@
+[
+  {
+    "topic": "Disiplin diri ketika kamu ingin menyerah",
+    "avg_views": 1200000,
+    "avg_views_formatted": "1.2M",
+    "duration_seconds": 42,
+    "hook_style": "Kalimat provokatif di 3 detik pertama ('Jangan tonton video ini kalau kamu masih mau malas-malasan...')",
+    "recommended_hashtags": [
+      "#motivasi",
+      "#disiplin",
+      "#stoikisme",
+      "#motivasihidup",
+      "#fyp"
+    ],
+    "engagement_score": 9.5,
+    "language": "id"
+  },
+  {
+    "topic": "Mental baja menghadapi orang yang meremehkanmu",
+    "avg_views": 2500000,
+    "avg_views_formatted": "2.5M",
+    "duration_seconds": 50,
+    "hook_style": "Pertanyaan retoris ('Kenapa orang sukses dulunya sering diremehkan?')",
+    "recommended_hashtags": [
+      "#mentalbaja",
+      "#sukses",
+      "#inspirasi",
+      "#mindset",
+      "#shorts"
+    ],
+    "engagement_score": 9.8,
+    "language": "id"
+  },
+  {
+    "topic": "Pelajaran hidup umur 20-an yang sering disesali",
+    "avg_views": 850000,
+    "avg_views_formatted": "850K",
+    "duration_seconds": 38,
+    "hook_style": "Pernyataan mengejutkan ('3 hal yang bakal kamu sesali kalau telat sadar...')",
+    "recommended_hashtags": [
+      "#nasihat",
+      "#pengembangandiri",
+      "#lifequotes",
+      "#motivasi"
+    ],
+    "engagement_score": 9.1,
+    "language": "id"
+  }
+]

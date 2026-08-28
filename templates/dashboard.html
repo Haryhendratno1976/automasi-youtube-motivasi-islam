@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-title">🚀 Multi-Channel Dashboard</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h5 class="card-title">🇮🇩 Channel Indonesia</h5>
+                <div class="stat-value text-primary">{{ stats.id.views }}</div>
+                <div class="stat-label">Total Views | {{ stats.id.videos }} Videos</div>
+                <div class="mt-2"><span class="badge bg-success">Eng: {{ stats.id.eng }}%</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card stat-card" style="border-left-color: #7c3aed;">
+            <div class="card-body">
+                <h5 class="card-title">🇺🇸 Channel English</h5>
+                <div class="stat-value" style="color: #7c3aed;">{{ stats.en.views }}</div>
+                <div class="stat-label">Total Views | {{ stats.en.videos }} Videos</div>
+                <div class="mt-2"><span class="badge bg-success">Eng: {{ stats.en.eng }}%</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">Jadwal Posting Harian (4x Video)</div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr><th>Waktu</th><th>Bahasa</th><th>Platform</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for t in config.schedule.id.post_times %}
+                        <tr><td>{{ t }}</td><td>🇮🇩 Indonesia</td><td>YT & TT</td></tr>
+                        {% endfor %}
+                        {% for t in config.schedule.en.post_times %}
+                        <tr><td>{{ t }}</td><td>🇺🇸 English</td><td>YT & TT</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

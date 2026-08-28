@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-title">⚙️ Multi-Channel Settings</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">🇮🇩 Indonesia Channel</div>
+            <div class="card-body">
+                <form>
+                    <div class="mb-3">
+                        <label class="form-label">Jadwal Posting</label>
+                        <input type="text" class="form-control" value="{{ config.schedule.id.post_times|join(', ') }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Voiceover</label>
+                        <input type="text" class="form-control" value="{{ config.video_creator.tts.voices.id }}">
+                    </div>
+                    <button class="btn btn-primary btn-sm">Save ID Config</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">🇺🇸 English Channel</div>
+            <div class="card-body">
+                <form>
+                    <div class="mb-3">
+                        <label class="form-label">Jadwal Posting</label>
+                        <input type="text" class="form-control" value="{{ config.schedule.en.post_times|join(', ') }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Voiceover</label>
+                        <input type="text" class="form-control" value="{{ config.video_creator.tts.voices.en }}">
+                    </div>
+                    <button class="btn btn-info btn-sm">Save EN Config</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

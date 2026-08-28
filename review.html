@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review Video — AI Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #14171c;
+    --panel: #1b1f26;
+    --panel-border: #2a2f38;
+    --text-primary: #e8eaed;
+    --text-dim: #8b93a1;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --ok: #3ddc84;
+    --error: #e5484d;
+    --cyan: #5ec8f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(94,200,242,0.06), transparent 40%),
+      radial-gradient(circle at 80% 100%, rgba(61,220,132,0.05), transparent 40%);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 32px 20px 80px;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+  .topbar a { color: var(--cyan); text-decoration: none; }
+  .topbar a:hover { text-decoration: underline; }
+
+  h1 { font-weight: 700; font-size: 28px; margin: 4px 0 4px; letter-spacing: -0.01em; }
+  .subtitle { color: var(--text-dim); font-size: 14px; margin-bottom: 28px; line-height: 1.5; }
+
+  .flash {
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid;
+  }
+  .flash.success { background: rgba(61,220,132,0.08); border-color: rgba(61,220,132,0.35); color: var(--ok); }
+  .flash.error { background: rgba(229,72,77,0.08); border-color: rgba(229,72,77,0.35); color: var(--error); }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    border: 1px dashed var(--panel-border);
+    border-radius: 10px;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .lang-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: rgba(94,200,242,0.12);
+    color: var(--cyan);
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .card-title { font-weight: 700; font-size: 17px; line-height: 1.35; }
+  .card-hook { color: var(--text-dim); font-size: 14px; margin: 8px 0 4px; line-height: 1.5; }
+  .card-meta { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 10px; }
+  .card-tags { font-family: var(--mono); font-size: 12px; color: var(--cyan); margin-top: 8px; word-break: break-word; }
+
+  .card-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  form { margin: 0; }
+  button {
+    border: none;
+    border-radius: 7px;
+    padding: 10px 20px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.88; }
+  .btn-approve { background: var(--ok); color: #082014; }
+  .btn-reject { background: transparent; color: var(--error); border: 1px solid rgba(229,72,77,0.4); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Panel Kontrol / Review</span>
+    <a href="{{ url_for('dashboard') }}">&larr; Kembali ke Dashboard</a>
+  </div>
+  <h1>Review Video</h1>
+  <p class="subtitle">
+    Video menunggu persetujuan sebelum tayang. Cek dulu file video-nya
+    (path ada di bawah tiap kartu) sebelum approve.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  {% if not pending %}
+    <div class="empty-state">Tidak ada video yang menunggu review saat ini.</div>
+  {% endif %}
+
+  {% for item in pending %}
+    <div class="card">
+      <div class="card-top">
+        <div>
+          <span class="lang-badge">{{ item.language }}</span>
+        </div>
+      </div>
+      <div class="card-title">{{ item.title }}</div>
+      <div class="card-hook">{{ item.hook }}</div>
+      <div class="card-tags">{{ item.hashtags_str }}</div>
+      <div class="card-meta">
+        Dibuat: {{ item.created_at }} &middot; File: {{ item.video_path }}
+      </div>
+      <div class="card-actions">
+        <form method="POST" action="{{ url_for('review_approve', review_id=item.id) }}">
+          <button type="submit" class="btn-approve">✓ Approve &amp; Upload</button>
+        </form>
+        <form method="POST" action="{{ url_for('review_reject', review_id=item.id) }}"
+              onsubmit="return confirm('Yakin tolak dan hapus video ini?');">
+          <button type="submit" class="btn-reject">✕ Tolak</button>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# --- Web dashboard & scheduler ---
+Flask>=3.0.0
+python-dotenv>=1.0.0
+schedule>=1.2.0
+PyYAML>=6.0
+
+# --- AI: riset topik (Gemini) & script generator (Gemini) ---
+google-genai>=0.3.0
+
+# --- Video creation: voiceover, assembly, subtitle, thumbnail ---
+edge-tts>=6.1.0
+moviepy>=2.1.0
+Pillow>=10.0.0
+
+# --- Upload YouTube ---
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.130.0
+
+# --- HTTP & Telegram notifikasi ---
+requests>=2.31.0
+httpx>=0.27.0
+python-telegram-bot>=20.0
+
+# Catatan:
+# - ffmpeg BUKAN package Python -- pastikan binary ffmpeg versi terbaru
+#   terinstall di image Docker/Railway (lihat catatan di Dockerfile),
+#   bukan cuma lewat pip. Versi ffmpeg lama menyebabkan error "failed to
+#   read the first frame" pada beberapa file footage.
