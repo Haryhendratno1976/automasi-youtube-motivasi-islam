@@ -16,7 +16,7 @@ import warnings
 import time
 from io import BytesIO
 from pathlib import Path
-from moviepy import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, ColorClip, ImageClip, vfx
+from moviepy import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, CompositeAudioClip, ColorClip, ImageClip, vfx, afx
 from moviepy.video.fx import Resize, Crop
 from PIL import ImageFont, Image, ImageDraw
 import edge_tts
@@ -795,6 +795,93 @@ class VideoCreator:
         except Exception as e:
             logger.warning(f"Gagal membaca info memori ({e}).")
 
+    # Ekstensi audio yang dipindai di folder musik latar.
+    _BACKGROUND_AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".ogg", ".flac")
+    # Batas atas durasi loop track musik latar -- video Shorts di pipeline
+    # ini ditarget 30-45 detik (lihat prompt di script_generator.py), jadi
+    # 3 menit sudah jauh lebih dari cukup sebagai jaring pengaman tanpa
+    # perlu tahu durasi total video di awal (durasi tiap scene baru
+    # diketahui satu-satu dari file voiceover asli, bukan estimasi).
+    _MAX_BACKGROUND_AUDIO_DURATION = 180
+
+    def _background_audio_dir(self):
+        return self.assets_dir / "music"
+
+    def _list_background_audio_files(self):
+        """Daftar file audio di assets/music/ (folder yang HARUS diisi manual
+        oleh user dengan track nasheed vokal-only yang lisensinya jelas untuk
+        pemakaian komersial -- lihat catatan lisensi di config.yaml.example.
+        Kalau folder kosong, musik latar otomatis dilewati (fail-open,
+        bukan error) -- video tetap dibuat tanpa musik latar."""
+        music_dir = self._background_audio_dir()
+        if not music_dir.exists():
+            return []
+        return sorted([
+            p for p in music_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in self._BACKGROUND_AUDIO_EXTENSIONS
+        ])
+
+    def _load_nasheed_track_history(self):
+        history_file = Path("reports") / "nasheed_track_history.json"
+        if not history_file.exists():
+            return []
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def _save_nasheed_track_history(self, filename):
+        """Catat track yang barusan dipakai supaya video BERIKUTNYA prioritas
+        pakai track LAIN dulu (rotasi) -- sama seperti pola diversity untuk
+        hook_pattern_history_*.json di script_generator.py, supaya channel
+        tidak kedengaran pakai track yang itu-itu saja terus-menerus."""
+        history_file = Path("reports") / "nasheed_track_history.json"
+        os.makedirs("reports", exist_ok=True)
+        history = self._load_nasheed_track_history()
+        history.append(filename)
+        history = history[-20:]
+        try:
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Gagal simpan riwayat track nasheed: {e}")
+
+    def _pick_background_audio_path(self):
+        """Pilih 1 file track dari assets/music/, PRIORITASKAN yang paling
+        jarang/lama tidak dipakai (rotasi), bukan random murni -- supaya
+        variasi musik latar antar video lebih merata kalau library-nya kecil
+        (mis. baru 8 track gratis dari Aswati)."""
+        files = self._list_background_audio_files()
+        if not files:
+            return None
+        history = self._load_nasheed_track_history()
+        filenames = [f.name for f in files]
+        recent = history[-len(filenames):] if history else []
+        from collections import Counter
+        counts = Counter(recent)
+        unused = [f for f in files if counts[f.name] == 0]
+        chosen = random.choice(unused) if unused else random.choice(files)
+        return chosen
+
+    def _get_background_audio_slice(self, bg_track_full, cursor, duration):
+        """Ambil potongan track musik latar dari posisi `cursor` sepanjang
+        `duration` detik -- karena tiap scene di-render TERPISAH lalu
+        di-concat via ffmpeg stream-copy, memotong berdasarkan cursor waktu
+        yang terus berjalan (bukan mulai dari 0 tiap scene) inilah yang
+        membuat musiknya terdengar MENYAMBUNG mulus antar-scene setelah
+        di-concat, alih-alih restart dari awal tiap ganti scene."""
+        available = bg_track_full.duration
+        start = min(cursor, max(0, available - 0.1))
+        end = min(cursor + duration, available)
+        if end <= start:
+            # Kehabisan durasi track (kasus ekstrem: video lebih panjang dari
+            # _MAX_BACKGROUND_AUDIO_DURATION) -- ambil potongan terakhir yang
+            # tersisa alih-alih error.
+            start = max(0, available - duration)
+            end = available
+        return bg_track_full.subclipped(start, end)
+
     def create_video(self, script_data, voiceover_segments, language="id"):
         """
         Merakit video Shorts (1080x1920) dengan strategi HEMAT MEMORI:
@@ -825,6 +912,39 @@ class VideoCreator:
         fps = self.video_config.get("fps", 30)
         downloaded_footage_paths = []
         scene_video_paths = []
+
+        # --- Musik latar (nasheed vokal-only) -- OPT-IN via config.yaml:
+        # video_creator.background_audio_enabled: true. Dimuat SEKALI di
+        # sini (bukan per-scene), lalu dipotong per-scene berdasarkan
+        # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
+        # terdengar menyambung setelah scene-scene di-concat.
+        background_audio_enabled = self.video_config.get("background_audio_enabled", False)
+        background_audio_volume = self.video_config.get("background_audio_volume", 0.18)
+        bg_track_full = None
+        bg_track_path = None
+        bg_cursor = 0.0
+        total_scene_count = min(len(voiceover_segments), len(scenes))
+
+        if background_audio_enabled:
+            bg_track_path = self._pick_background_audio_path()
+            if bg_track_path is None:
+                logger.warning(
+                    f"background_audio_enabled=true tapi tidak ada file audio di "
+                    f"{self._background_audio_dir()} -- video dibuat TANPA musik latar. "
+                    f"Isi folder itu dengan track nasheed vokal-only berlisensi jelas "
+                    f"untuk pemakaian komersial (lihat catatan lisensi di config.yaml.example)."
+                )
+            else:
+                try:
+                    bg_track_full = AudioFileClip(str(bg_track_path))
+                    if bg_track_full.duration < self._MAX_BACKGROUND_AUDIO_DURATION:
+                        bg_track_full = bg_track_full.with_effects(
+                            [afx.AudioLoop(duration=self._MAX_BACKGROUND_AUDIO_DURATION)]
+                        )
+                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name}")
+                except Exception as e:
+                    logger.warning(f"Gagal load track musik latar {bg_track_path} ({e}), video dibuat TANPA musik latar (fail-open).")
+                    bg_track_full = None
 
         self._log_available_memory("sebelum mulai render per-scene")
 
@@ -1044,7 +1164,27 @@ class VideoCreator:
                 logger.warning(f"Gagal membuat subtitle TextClip: {e}")
 
             scene_composite = CompositeVideoClip(scene_layers, size=(1080, 1920)).with_duration(scene_duration)
-            scene_composite = scene_composite.with_audio(seg_audio)
+
+            if bg_track_full is not None:
+                try:
+                    bg_slice = self._get_background_audio_slice(bg_track_full, bg_cursor, scene_duration)
+                    bg_slice = bg_slice.with_effects([afx.MultiplyVolume(background_audio_volume)])
+                    if idx == 0:
+                        bg_slice = bg_slice.with_effects([afx.AudioFadeIn(1.0)])
+                    if idx == total_scene_count - 1:
+                        bg_slice = bg_slice.with_effects([afx.AudioFadeOut(1.5)])
+                    final_audio = CompositeAudioClip([seg_audio, bg_slice])
+                    scene_composite = scene_composite.with_audio(final_audio)
+                except Exception as e:
+                    # Fail-open: kalau mixing musik latar scene ini gagal
+                    # (mis. track lebih pendek dari perkiraan), tetap pakai
+                    # narasi saja untuk scene ini -- jangan sampai satu
+                    # error musik latar menggagalkan seluruh video.
+                    logger.warning(f"Scene {idx}: gagal mixing musik latar ({e}), scene ini pakai narasi saja.")
+                    scene_composite = scene_composite.with_audio(seg_audio)
+            else:
+                scene_composite = scene_composite.with_audio(seg_audio)
+            bg_cursor += scene_duration
 
             scene_output_path = self.temp_dir / f"scene_{language}_{idx}.mp4"
             try:
@@ -1066,6 +1206,9 @@ class VideoCreator:
                     try: raw_clip_to_close.close()
                     except: pass
                 seg_audio.close()
+                if bg_track_full is not None:
+                    try: bg_track_full.close()
+                    except: pass
                 raise
             finally:
                 # PENTING: tutup semua objek clip scene ini SEKARANG, sebelum
@@ -1077,6 +1220,16 @@ class VideoCreator:
                 seg_audio.close()
 
             self._log_available_memory(f"setelah render scene {idx}")
+
+        # Tutup track musik latar (dibuka SEKALI di luar loop, dipakai
+        # lintas-scene) & catat ke riwayat rotasi -- hanya kalau video
+        # berhasil dirender sampai sini (jalur exception di atas sudah
+        # menutupnya sendiri sebelum re-raise).
+        if bg_track_full is not None:
+            try: bg_track_full.close()
+            except Exception: pass
+            if bg_track_path is not None:
+                self._save_nasheed_track_history(bg_track_path.name)
 
         # Bersihkan file footage/gambar AI & voiceover segmen yang sudah dipakai
         for fp in downloaded_footage_paths:
