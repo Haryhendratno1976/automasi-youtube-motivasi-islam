@@ -882,6 +882,58 @@ class VideoCreator:
             end = available
         return bg_track_full.subclipped(start, end)
 
+    def _logo_position_xy(self, position, logo_w, logo_h, margin, canvas_w=1080, canvas_h=1920):
+        """Hitung koordinat pixel (x, y) pojok kanvas untuk logo watermark, berdasarkan nama posisi + margin dari tepi."""
+        if position == "top-left":
+            return (margin, margin)
+        elif position == "top-right":
+            return (canvas_w - logo_w - margin, margin)
+        elif position == "bottom-left":
+            return (margin, canvas_h - logo_h - margin)
+        else:  # "bottom-right", default
+            return (canvas_w - logo_w - margin, canvas_h - logo_h - margin)
+
+    def _load_logo_watermark_clip(self):
+        """
+        Muat logo watermark SEKALI (dipakai ulang di semua scene, mirip pola
+        musik latar) -- OPT-IN via config.yaml: video_creator.logo_watermark.
+        Fail-open: kalau file tidak ada/gagal dimuat, video tetap dibuat
+        TANPA logo (bukan error), supaya fitur estetika ini tidak pernah
+        menggagalkan seluruh pipeline video.
+        """
+        cfg = self.video_config.get("logo_watermark", {})
+        if not cfg.get("enabled", False):
+            return None
+
+        logo_path = cfg.get("path", "assets/branding/logo.png")
+        if not os.path.exists(logo_path):
+            logger.warning(
+                f"logo_watermark.enabled=true tapi file '{logo_path}' tidak ditemukan -- "
+                f"video dibuat TANPA logo. Pastikan file logo ada di path tersebut."
+            )
+            return None
+
+        try:
+            width_fraction = cfg.get("width_fraction", 0.16)
+            target_width = max(20, int(1080 * width_fraction))
+
+            logo_clip = ImageClip(logo_path).with_effects([Resize(width=target_width)])
+
+            opacity = cfg.get("opacity", 1.0)
+            if opacity < 1.0:
+                logo_clip = logo_clip.with_opacity(opacity)
+
+            position = cfg.get("position", "top-right")
+            margin = cfg.get("margin", 30)
+            xy = self._logo_position_xy(position, logo_clip.w, logo_clip.h, margin)
+            logo_clip = logo_clip.with_position(xy)
+
+            logger.info(f"Logo watermark dimuat: {logo_path} ({logo_clip.w}x{logo_clip.h}px @ {position}).")
+            return logo_clip
+        except Exception as e:
+            logger.warning(f"Gagal load logo watermark ({e}), video dibuat TANPA logo (fail-open).")
+            return None
+
     def create_video(self, script_data, voiceover_segments, language="id"):
         """
         Merakit video Shorts (1080x1920) dengan strategi HEMAT MEMORI:
@@ -947,6 +999,8 @@ class VideoCreator:
                     bg_track_full = None
 
         self._log_available_memory("sebelum mulai render per-scene")
+
+        logo_base_clip = self._load_logo_watermark_clip()
 
         for idx, seg_path in enumerate(voiceover_segments):
             if idx >= len(scenes):
@@ -1163,6 +1217,12 @@ class VideoCreator:
             except Exception as e:
                 logger.warning(f"Gagal membuat subtitle TextClip: {e}")
 
+            if logo_base_clip is not None:
+                # Ditambahkan PALING TERAKHIR ke scene_layers supaya logo
+                # selalu tampil di lapisan PALING ATAS (di atas subtitle
+                # sekalipun), konsisten di setiap scene/video.
+                scene_layers.append(logo_base_clip.with_duration(scene_duration))
+
             scene_composite = CompositeVideoClip(scene_layers, size=(1080, 1920)).with_duration(scene_duration)
 
             if bg_track_full is not None:
@@ -1209,6 +1269,9 @@ class VideoCreator:
                 if bg_track_full is not None:
                     try: bg_track_full.close()
                     except: pass
+                if logo_base_clip is not None:
+                    try: logo_base_clip.close()
+                    except: pass
                 raise
             finally:
                 # PENTING: tutup semua objek clip scene ini SEKARANG, sebelum
@@ -1230,6 +1293,10 @@ class VideoCreator:
             except Exception: pass
             if bg_track_path is not None:
                 self._save_nasheed_track_history(bg_track_path.name)
+
+        if logo_base_clip is not None:
+            try: logo_base_clip.close()
+            except Exception: pass
 
         # Bersihkan file footage/gambar AI & voiceover segmen yang sudah dipakai
         for fp in downloaded_footage_paths:
