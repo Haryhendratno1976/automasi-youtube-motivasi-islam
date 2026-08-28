@@ -8,10 +8,17 @@
 # statis di dalam research.py (tetap jalan, cuma kurang variatif).
 research:
   gemini_model: gemini-3.6-flash
+
+  # WAJIB untuk niche Islam -- aktifkan supaya prompt riset topik dapat
+  # instruksi tambahan (hindari topik sektarian/khilafiyah, jangan
+  # mengusulkan topik yang butuh kutip nomor ayat/hadits spesifik, tone
+  # hangat-reflektif). Lihat _fetch_from_gemini() di research.py.
+  islamic_content_guidelines: true
+
   niche:
     id: "motivasi Islami dan edukasi agama Islam untuk kehidupan sehari-hari (akhlak, ibadah, muamalah)"
     en: "Islamic motivation and Islamic education for everyday life (character, worship, practical wisdom)"
- 
+
   keywords:
     id:
       - "motivasi islami"
@@ -37,12 +44,42 @@ research:
     en: "Global Muslim audience (US, UK, international)"
 
 # --- 2. Script generator (script_generator.py) ---
-# Narasi + hook dibuat via ChatGPT. Kalau OPENAI_API_KEY kosong/gagal,
-# fallback ke template acak (3 varian/bahasa, tetap dipersonalisasi per topik).
+# Narasi + hook dibuat via Gemini AI (BUKAN ChatGPT/OpenAI -- seluruh
+# pipeline ini sudah migrasi penuh ke google-genai). Kalau GEMINI_API_KEY
+# kosong/gagal, otomatis fallback ke template (3 varian/bahasa per niche,
+# tetap dipersonalisasi per topik -- termasuk template khusus Islami kalau
+# islamic_content_guidelines aktif, lihat _build_fallback_script()).
 script_generator:
   style:
     id: "reflektif, hangat, dan menenangkan -- bukan menggurui/menghakimi"
-    en: "reflective, warm, and calming -- not preachy or judgmental""
+    en: "reflective, warm, and calming -- not preachy or judgmental"
+
+  # WAJIB untuk niche Islam -- aktifkan supaya:
+  # - Prompt Gemini dapat instruksi "ISLAMIC CONTENT ACCURACY" (larang
+  #   kutip nomor ayat/hadits spesifik, larang topik khilafiyah/sektarian)
+  # - Hook type yang dipakai otomatis dari ISLAMIC_HOOK_TYPES (bukan
+  #   HOOK_TYPES yang bertema stoic/Marcus Aurelius)
+  # - Template fallback pakai versi Islami (bukan motivasi umum)
+  # - Hashtag strategy disesuaikan (5-8 hashtag, bukan 8-12)
+  islamic_content_guidelines: true
+
+  # Nama niche yang disisipkan ke prompt AI -- tanpa ini, kode fallback
+  # ke "Life Motivation" secara default.
+  niche_label:
+    id: "motivasi dan edukasi Islam"
+    en: "Islamic motivation and education"
+
+  # Hashtag branding KONSISTEN di setiap video -- OPSIONAL. Kalau kamu
+  # ISI manual di sini, itu SELALU dipakai. Kalau DIBIARKAN KOSONG/dihapus,
+  # sistem AUTO-GENERATE lewat Gemini SEKALI SAJA (diturunkan dari
+  # niche_label di atas), lalu disimpan permanen ke
+  # reports/brand_hashtag_<lang>.json supaya tetap SAMA di semua video
+  # berikutnya (bukan generate ulang tiap video -- itu akan menghilangkan
+  # tujuan hashtag branding ini). Hapus baris di bawah kalau mau full
+  # auto, atau isi manual kalau mau kontrol penuh nama brand-nya.
+  brand_hashtag:
+    id: "#RenunganHarianIslami"   # opsional -- hapus baris ini utk auto-generate
+    en: "#DailyIslamicReminders"  # opsional -- hapus baris ini utk auto-generate
 
 # --- 3. Video creator (creator.py) ---
 video_creator:
@@ -52,6 +89,7 @@ video_creator:
   # jadi avoid_women_in_visuals tidak perlu diaktifkan lagi (redundant).
   avoid_human_figures_in_visuals: true
   avoid_women_in_visuals: false   # tidak perlu, sudah tercakup di atas
+
   fps: 30
   gemini_image_model: gemini-3.1-flash-image
   # Persentase scene yang SENGAJA pakai gambar AI (bukan Pexels) walau
@@ -59,6 +97,32 @@ video_creator:
   # yang menurunkan ranking video ber-footage generik yang sama dipakai
   # banyak kreator lain. 0.35 = 35% scene pakai gambar AI unik.
   ai_image_ratio: 0.35
+
+  # ============================================================
+  # MUSIK LATAR (nasheed vokal-only) -- OPT-IN
+  # ============================================================
+  # PENTING SOAL LISENSI: JANGAN pakai file yang di-download/scrape dari
+  # YouTube atau sumber tidak jelas lisensinya -- untuk video yang
+  # dimonetisasi/dijual sebagai produk, risiko Content ID claim/copyright
+  # strike itu nyata. Sumber yang SUDAH terverifikasi eksplisit boleh
+  # dipakai komersial/termonetisasi (per Agustus 2026):
+  #   - https://aswati.co/vocals -- 8 track GRATIS (vokal-only, in-house,
+  #     dilisensikan eksplisit utk YouTube termonetisasi/TikTok/client
+  #     work), atau paket berbayar $9/bulan utk 70+ track + update bulanan
+  #   - https://pixabay.com/music/search/islamic%20nasheed/ -- cek lisensi
+  #     PER TRACK sebelum pakai (Pixabay License, bukan semua track sama)
+  # Download beberapa track (disarankan 5-10 biar variatif), taruh semua
+  # file .mp3/.wav di folder assets/music/ (folder ini sudah otomatis
+  # dibuat pipeline-nya) -- pipeline akan ROTASI otomatis antar track
+  # supaya tidak kedengaran itu-itu saja tiap video.
+  background_audio_enabled: true
+  # Volume musik latar RELATIF terhadap narasi (0.0 - 1.0). Narasi selalu
+  # di volume penuh; angka ini melemahkan musik latar supaya tidak
+  # menabrak kejelasan suara narator. 0.18 adalah titik awal yang aman --
+  # naik/turunkan sambil dengarkan hasil videonya, tergantung seberapa
+  # keras track nasheed yang kamu pakai.
+  background_audio_volume: 0.18
+
   tts:
     voices:
       id: ["id-ID-ArdiNeural", "id-ID-GadisNeural"]
