@@ -11,6 +11,8 @@ import json
 import logging
 import yaml
 import random as _random
+from datetime import datetime
+from pathlib import Path
 
 try:
     from google import genai
@@ -479,15 +481,113 @@ text before or after) with this exact structure:
 
         return self._fallback_title_and_hashtags(topic, language, research_hashtags)
 
+    def _get_or_create_brand_hashtag(self, language):
+        """
+        Hashtag branding channel yang dipakai KONSISTEN di setiap video
+        (bangun 'topic authority' YouTube dari waktu ke waktu). Prioritas:
+        1. config.yaml script_generator.brand_hashtag.<lang> -- kalau diisi
+           manual, itu SELALU dipakai (override, tidak pernah ditimpa oleh
+           auto-generate).
+        2. reports/brand_hashtag_<lang>.json -- kalau sudah pernah
+           di-auto-generate sebelumnya, pakai yang SAMA lagi (supaya tetap
+           konsisten -- BUKAN generate baru tiap video, itu akan
+           menghilangkan tujuan branding hashtag ini).
+        3. Kalau belum ada di dua tempat itu, generate SEKALI via Gemini
+           (diturunkan dari niche_label), lalu SIMPAN ke file supaya video
+           berikutnya pakai hasil yang sama, bukan generate ulang lagi.
+        """
+        manual = self.script_config.get("brand_hashtag", {}).get(language, "").strip()
+        if manual:
+            return manual
+
+        persisted_file = Path("reports") / f"brand_hashtag_{language}.json"
+        if persisted_file.exists():
+            try:
+                with open(persisted_file, "r", encoding="utf-8") as f:
+                    saved = json.load(f).get("hashtag", "").strip()
+                if saved:
+                    return saved
+            except Exception:
+                pass
+
+        niche_name = self.niche_label.get(language) or "Islamic Motivation"
+        generated = None
+        if self._gemini_ready:
+            try:
+                gen_prompt = (
+                    f"Suggest ONE short, catchy YouTube/TikTok branding hashtag "
+                    f"(2-4 words, no spaces, CamelCase, starting with #) for a "
+                    f"channel in this niche: \"{niche_name}\" ({'Bahasa Indonesia' if language == 'id' else 'English'} "
+                    f"audience). This hashtag will be used on EVERY video from "
+                    f"this channel to build topic authority, so it must be "
+                    f"GENERIC to the whole channel, not tied to any single "
+                    f"video's topic. Respond with ONLY the hashtag itself, "
+                    f"nothing else -- no explanation, no quotes."
+                )
+                response = self._gemini_client.models.generate_content(
+                    model=self.gemini_model_name,
+                    contents=gen_prompt,
+                    config=genai_types.GenerateContentConfig(
+                        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True)
+                    ),
+                )
+                candidate = (response.text or "").strip().split()[0] if response.text else ""
+                candidate = candidate.strip('"\'')
+                if candidate and candidate.startswith("#") and len(candidate) <= 40:
+                    generated = candidate
+            except Exception as e:
+                logger.warning(f"Gagal auto-generate brand hashtag via Gemini ({e}), pakai fallback deterministik.")
+
+        if not generated:
+            # Fallback deterministik (tanpa AI) -- ubah niche_label jadi
+            # CamelCase hashtag sederhana, supaya tetap ada hasil walau
+            # Gemini tidak tersedia.
+            words = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in niche_name).split()
+            generated = "#" + "".join(w.capitalize() for w in words[:4]) if words else "#DailyReminders"
+
+        try:
+            os.makedirs("reports", exist_ok=True)
+            with open(persisted_file, "w", encoding="utf-8") as f:
+                json.dump({"hashtag": generated, "generated_at": datetime.now().isoformat()}, f, indent=2)
+            logger.info(f"Brand hashtag ({language.upper()}) di-generate & disimpan permanen: {generated}")
+        except Exception as e:
+            logger.warning(f"Gagal simpan brand hashtag yang di-generate ({e}) -- akan generate ulang video berikutnya.")
+
+        return generated
+
     def _generate_title_hashtags_via_gemini(self, topic, research_hook_style, research_hashtags, hook, language):
         lang_name = "Bahasa Indonesia" if language == "id" else "English"
+        islamic_title_hashtag_guidance = ""
+        if self.islamic_content_mode:
+            brand_tag = self._get_or_create_brand_hashtag(language)
+            brand_clause = (
+                f' Also ALWAYS include this exact branding hashtag in the list: "{brand_tag}" '
+                f"(consistent branding hashtag builds topic authority over time)."
+                if brand_tag else ""
+            )
+            islamic_title_hashtag_guidance = f"""
+ISLAMIC NICHE ADJUSTMENTS (based on analysis of top-performing Islamic
+motivation/education channels and Shorts in this niche):
+- Hashtag count: use 5-8 hashtags total, NOT 8-12 -- in this specific
+  niche, more than that measurably hurts reach (over-tagging reads as
+  spam to both viewers and the algorithm in this content category).{brand_clause}
+- Front-load the core keyword/theme (e.g. "Sabar", "Syukur", "Tawakal",
+  "Patience", "Trust in Allah") within the FIRST 40 CHARACTERS of the
+  title -- this is where this niche's search-driven traffic comes from.
+- Prefer a comforting/reassuring emotional angle when relevant (many
+  top-performing titles/hooks in this niche follow a "relatable struggle
+  -> Islamic reassurance" arc -- e.g. naming a real everyday hardship,
+  then pointing to steadiness/trust/patience) over abstract or purely
+  instructional framing.
+"""
+
         prompt = f"""You are a viral YouTube Shorts / TikTok title & hashtag strategist.
 Topic (from trend research): "{topic}"
 Suggested hook angle (from trend research): "{research_hook_style}"
 Hashtags already suggested by trend research: {research_hashtags}
 Actual video hook used in this video: "{hook}"
 Target language: {lang_name}
-
+{islamic_title_hashtag_guidance}
 Generate:
 1. 5 DIFFERENT title variants (each under 100 characters), ranked from
    most to least likely to go viral. Each title should use a DIFFERENT
@@ -499,7 +599,7 @@ Generate:
    person would type into search), not pure clickbait with no searchable
    terms. Balance virality with discoverability -- don't sacrifice all
    keyword clarity for shock value.
-2. A set of 8-12 hashtags optimized for reach: mix broad discovery tags
+2. A set of {"5-8" if self.islamic_content_mode else "8-12"} hashtags optimized for reach: mix broad discovery tags
    (e.g. #shorts, #motivation) with niche/specific tags relevant to the
    topic, and feel free to reuse/refine the trend-research hashtags above.
 
