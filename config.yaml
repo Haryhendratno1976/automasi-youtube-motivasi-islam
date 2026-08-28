@@ -123,6 +123,17 @@ video_creator:
   # keras track nasheed yang kamu pakai.
   background_audio_volume: 0.18
 
+  # ============================================================
+  # LOGO WATERMARK -- tampil di setiap video, pojok kanan atas
+  # ============================================================
+  logo_watermark:
+    enabled: true
+    path: "assets/branding/logo.png"   # taruh file logo.png di sini
+    position: "top-right"   # top-left, top-right, bottom-left, bottom-right
+    width_fraction: 0.16    # 16% dari lebar video (1080px) = ~172px
+    margin: 30               # jarak dari tepi frame, dalam pixel
+    opacity: 1.0             # 1.0 = solid penuh, turunkan (mis. 0.8) utk semi-transparan
+
   tts:
     voices:
       id: ["id-ID-ArdiNeural", "id-ID-GadisNeural"]
