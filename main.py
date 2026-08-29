@@ -426,7 +426,7 @@ if __name__ == "__main__":
 
     # Default rentang jam kalau tidak ada di config.yaml:
     # ID: 19:30-20:00 dan 06:00-07:00 | EN: 06:30-07:30 dan 23:00-23:59
-    default_id_ranges = [["13:35", "13:40"], ["05:00", "05:30"]]
+    default_id_ranges = [["13:50", "13:55"], ["05:00", "05:30"]]
     default_en_ranges = [["06:30", "07:00"], ["18:00", "18:30"]]
 
     id_ranges = [tuple(r) for r in schedule_config.get("id", {}).get("time_ranges", default_id_ranges)]
