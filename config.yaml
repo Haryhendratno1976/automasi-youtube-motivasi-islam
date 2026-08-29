@@ -167,7 +167,7 @@ publishing:
 schedule:
   id:
     time_ranges:
-      - ["16:30", "17:00"]
+      - ["12:30", "13:00"]
       - ["05:00", "05:30"]
   en:
     time_ranges:
