@@ -286,6 +286,16 @@ points. Front-load the most interesting idea. Make the ending feel
 COMPLETE and satisfying (not just cut off) so it invites rewatches --
 rewatches and saves matter more than likes now.
 
+NARRATION PUNCTUATION FOR TTS (important -- this is read aloud by a
+text-to-speech engine, not displayed as plain text): the TTS engine reads
+intonation and pacing DIRECTLY from punctuation, so flat, run-on sentences
+with no punctuation produce flat, robotic-sounding speech. Write narration
+with natural punctuation the way a real person would actually PAUSE and
+EMPHASIZE while speaking -- use commas for short natural pauses, periods
+to fully stop and reset tone, and vary sentence length (mix short punchy
+sentences with longer ones) rather than a uniform run of same-length
+sentences. Avoid super long single sentences with no internal punctuation.
+
 STRUCTURE THE SCRIPT INTO EXACTLY 5 SCENES following this proven viral
 storytelling arc -- each scene maps to ONE beat below, in this order:
 1. HOOK -- grab attention in the first 3 seconds. Provocative statement,
