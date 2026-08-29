@@ -460,9 +460,15 @@ class VideoCreator:
         voices_config = self.video_config.get("tts", {}).get("voices", {})
         default_voices = {
             "id": ["id-ID-ArdiNeural", "id-ID-GadisNeural"],
+            # Riset komunitas edge-tts (github.com/rany2/edge-tts diskusi #340)
+            # konsisten sebut voice multilingual generasi baru & GB-Ryan
+            # sebagai yang PALING natural/tidak robotic di antara semua
+            # voice edge-tts -- ditambahkan sebagai opsi rotasi.
             "en": ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
                    "en-US-RogerNeural", "en-US-JennyNeural", "en-US-AriaNeural",
-                   "en-US-AndrewNeural", "en-US-EmmaNeural"],
+                   "en-US-AndrewNeural", "en-US-EmmaNeural",
+                   "en-US-EmmaMultilingualNeural", "en-US-AvaMultilingualNeural",
+                   "en-GB-RyanNeural"],
         }
         voice_list = voices_config.get(language)
         if isinstance(voice_list, str):
@@ -474,6 +480,29 @@ class VideoCreator:
         random.shuffle(candidates)
         voice = candidates[0]
 
+        # Variasi rate/pitch KECIL per-scene -- edge-tts (seperti TTS lain)
+        # terdengar "AI banget" salah satunya karena ritme & pitch-nya
+        # PERSIS SAMA rata di seluruh durasi bicara, sesuatu yang tidak
+        # pernah terjadi di suara manusia asli. Variasi acak kecil ini
+        # (bukan konstan) meniru variasi alami tanpa terdengar aneh/lucu --
+        # rentang sengaja dibuat SEMPIT supaya tetap terdengar seperti 1
+        # narator yang sama, bukan berubah-ubah drastis.
+        tts_config = self.video_config.get("tts", {})
+        base_rate_str = tts_config.get("rate", "+0%")
+        base_pitch_str = tts_config.get("pitch", "+0Hz")
+        rate_jitter_pct = tts_config.get("rate_jitter_percent", 4)   # +/- 4%
+        pitch_jitter_hz = tts_config.get("pitch_jitter_hz", 3)       # +/- 3Hz
+
+        def _parse_numeric(value_str, suffix):
+            """Parse string seperti '+5%' atau '-3Hz' jadi float. Fail-safe: kalau format tidak dikenali, anggap 0."""
+            try:
+                return float(value_str.replace(suffix, "").replace("+", ""))
+            except (ValueError, AttributeError):
+                return 0.0
+
+        base_rate_num = _parse_numeric(base_rate_str, "%")
+        base_pitch_num = _parse_numeric(base_pitch_str, "Hz")
+
         scenes = script_data.get("scenes", [])
         logger.info(f"Menghasilkan voiceover ({language.upper()}) per-scene ({len(scenes)} segmen) menggunakan suara: {voice}")
 
@@ -484,6 +513,13 @@ class VideoCreator:
                 continue
             seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
 
+            # Hitung rate/pitch acak KECIL untuk scene ini saja (beda tiap
+            # scene, tapi masih di sekitar base_rate/base_pitch dari config).
+            scene_rate_num = base_rate_num + random.uniform(-rate_jitter_pct, rate_jitter_pct)
+            scene_pitch_num = base_pitch_num + random.uniform(-pitch_jitter_hz, pitch_jitter_hz)
+            scene_rate = f"{'+' if scene_rate_num >= 0 else ''}{scene_rate_num:.0f}%"
+            scene_pitch = f"{'+' if scene_pitch_num >= 0 else ''}{scene_pitch_num:.0f}Hz"
+
             # Kalau suara yang dipilih ternyata invalid/gagal (nama voice
             # salah, dsb), coba suara lain dari daftar sebelum menyerah --
             # tapi TETAP suara yang sama dipakai konsisten untuk sisa scene
@@ -491,7 +527,9 @@ class VideoCreator:
             last_error = None
             for attempt_voice in [voice] + [v for v in candidates if v != voice]:
                 try:
-                    communicate = edge_tts.Communicate(text, attempt_voice)
+                    communicate = edge_tts.Communicate(
+                        text, attempt_voice, rate=scene_rate, pitch=scene_pitch, volume="+0%"
+                    )
                     await communicate.save(str(seg_path))
                     if attempt_voice != voice:
                         logger.warning(f"Suara '{voice}' gagal dipakai, beralih ke '{attempt_voice}' untuk sisa video.")
@@ -971,7 +1009,7 @@ class VideoCreator:
         # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
         # terdengar menyambung setelah scene-scene di-concat.
         background_audio_enabled = self.video_config.get("background_audio_enabled", False)
-        background_audio_volume = self.video_config.get("background_audio_volume", 0.35)
+        background_audio_volume = self.video_config.get("background_audio_volume", 0.18)
         bg_track_full = None
         bg_track_path = None
         bg_cursor = 0.0
@@ -989,11 +1027,21 @@ class VideoCreator:
             else:
                 try:
                     bg_track_full = AudioFileClip(str(bg_track_path))
+                    # Normalisasi peak SEBELUM dipakai -- tanpa ini, volume
+                    # efektif musik latar sangat tergantung loudness ASLI
+                    # tiap file (track dari sumber berbeda sering punya
+                    # loudness mentah yang beda jauh), jadi angka
+                    # background_audio_volume yang sama bisa kedengaran
+                    # keras di 1 track tapi nyaris tidak terdengar di track
+                    # lain. Normalisasi bikin semua track mulai dari
+                    # baseline volume yang SAMA sebelum di-multiply, jadi
+                    # hasilnya jauh lebih konsisten & bisa diprediksi.
+                    bg_track_full = bg_track_full.with_effects([afx.AudioNormalize()])
                     if bg_track_full.duration < self._MAX_BACKGROUND_AUDIO_DURATION:
                         bg_track_full = bg_track_full.with_effects(
                             [afx.AudioLoop(duration=self._MAX_BACKGROUND_AUDIO_DURATION)]
                         )
-                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name}")
+                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name} (dinormalisasi).")
                 except Exception as e:
                     logger.warning(f"Gagal load track musik latar {bg_track_path} ({e}), video dibuat TANPA musik latar (fail-open).")
                     bg_track_full = None
@@ -1022,7 +1070,7 @@ class VideoCreator:
             # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
             # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
             # gelap padahal Pexels-nya sendiri sehat-sehat saja.
-            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.35)
+            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.25)
             force_ai_image = random.random() < ai_image_ratio
 
             visual_prompt = scene.get("visual_prompt", "motivation")
