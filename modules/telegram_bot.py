@@ -233,6 +233,35 @@ class TelegramBotManager:
     def _back_keyboard(self):
         return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]])
 
+    async def _error_handler(self, update, context):
+        """
+        Handler error terpusat untuk Application -- TANPA ini, python-telegram-bot
+        cuma dump traceback panjang ke log tiap kali ada exception (persis
+        yang terlihat di log kamu: "No error handlers are registered").
+
+        Khusus untuk telegram.error.Conflict ("terminated by other getUpdates
+        request"): ini BUKAN bug di kode -- artinya ada 2 instance bot jalan
+        bersamaan dengan token yang SAMA (Telegram cuma izinkan 1 koneksi
+        polling aktif per token). Paling sering terjadi sebentar saat Railway
+        redeploy (container lama belum benar-benar mati saat container baru
+        mulai polling) -- python-telegram-bot SUDAH otomatis retry sampai
+        container lama benar-benar berhenti, jadi biasanya pulih sendiri
+        dalam beberapa detik. Kalau ini muncul TERUS-MENERUS (bukan cuma
+        sebentar saat redeploy), cek di Railway: pastikan service bot ini
+        replicas=1 (bukan lebih), dan tidak ada instance lain (mis. dijalankan
+        manual/lokal) pakai TELEGRAM_BOT_TOKEN yang sama secara bersamaan.
+        """
+        from telegram.error import Conflict
+        if isinstance(context.error, Conflict):
+            logger.warning(
+                "Conflict: ada instance bot LAIN yang juga polling dengan token yang sama "
+                "(biasanya normal & sementara saat Railway redeploy -- container lama vs baru "
+                "tumpang tindih sebentar). Kalau ini berlanjut terus, cek replicas di Railway "
+                "dan pastikan tidak ada instance lokal yang jalan bersamaan."
+            )
+        else:
+            logger.error(f"Error tak terduga di Telegram bot: {context.error}", exc_info=context.error)
+
     def run(self):
         if not self.token:
             logger.error("Token Telegram tidak ditemukan. Bot gagal berjalan.")
@@ -242,7 +271,12 @@ class TelegramBotManager:
         app = ApplicationBuilder().token(self.token).build()
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CallbackQueryHandler(self.button_handler))
-        app.run_polling()
+        app.add_error_handler(self._error_handler)
+        # drop_pending_updates=True -- buang update/tombol yang sempat
+        # tertunda dari SEBELUM restart ini (mis. tombol approve/reject lama
+        # yang video-nya mungkin sudah tidak relevan/sudah expired), supaya
+        # bot tidak memproses aksi basi begitu instance baru mulai polling.
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
