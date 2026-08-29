@@ -5,6 +5,7 @@ Mengintegrasikan Notifikasi Otomatis dan Interactive Dashboard Control.
 """
 
 import os
+import sys
 import logging
 import yaml
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -217,6 +218,27 @@ class TelegramBotManager:
         elif data == "agent_status":
             msg = "🟢 *Global Agent Status: RUNNING*\nMode: Multi-Language (ID + EN)\nTotal Posting Harian: 4 video"
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=self._back_keyboard())
+        elif data == "agent_generate":
+            # Trigger manual, TANPA nunggu jadwal -- spawn `main.py --once
+            # --language <id|en>` sebagai subprocess TERPISAH (fire-and-
+            # forget, bukan blocking di dalam proses bot ini). Video hasilnya
+            # akan otomatis terkirim sebagai notifikasi review terpisah
+            # begitu masing-masing selesai (bisa beberapa menit, tergantung
+            # render + upload voiceover).
+            await self._safe_edit_status(
+                query,
+                "🚀 Generate dimulai untuk ID & EN!\n\n"
+                "Proses jalan di background (biasanya beberapa menit). "
+                "Notifikasi video utk di-review akan otomatis terkirim ke sini "
+                "begitu masing-masing selesai -- tidak perlu tunggu di sini."
+            )
+            import subprocess
+            for lang in ("id", "en"):
+                try:
+                    subprocess.Popen([sys.executable, "main.py", "--once", "--language", lang])
+                    logger.info(f"Generate manual dipicu dari Telegram untuk bahasa: {lang.upper()}")
+                except Exception as e:
+                    logger.error(f"Gagal memulai generate manual ({lang.upper()}): {e}")
         elif data == "agent_analytics":
             msg = "📈 *Analytics Comparison*\n\n🇮🇩 ID: Active\n🇺🇸 EN: Active\n\n Laporan detail diperbarui jam 23:30."
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=self._back_keyboard())
