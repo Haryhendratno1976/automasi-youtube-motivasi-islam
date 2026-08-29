@@ -6,8 +6,8 @@ HOOK-TYPE taxonomy. Two pools are provided:
 """
 hook_patterns.py
 
-Extends the existing pattern-history system in script_generator.py with a
-HOOK-TYPE taxonomy. Two pools are provided:
+# Extends the existing pattern-history system in script_generator.py with a
+# HOOK-TYPE taxonomy. Two pools are provided:
 
 - HOOK_TYPES: derived from research on top-performing US motivation and
   stoicism channels (Daily Stoic, Fearless Motivation, Motiversity,
