@@ -262,7 +262,7 @@ class VideoCreator:
             # berikutnya (video Pexels / gambar AI / warna solid).
             candidates = list(photos)
             random.shuffle(candidates)
-            max_candidates = 5 if avoid_filter else 1
+            max_candidates = self.video_config.get("visual_filter_max_candidates", 2) if avoid_filter else 1
 
             for photo_choice in candidates[:max_candidates]:
                 img_url = (photo_choice.get('src', {}).get('large2x')
@@ -616,7 +616,7 @@ class VideoCreator:
                         avoid_filter = self._visual_filter_active()
                         video_pool = list(videos)
                         random.shuffle(video_pool)
-                        max_candidates = 5 if avoid_filter else 1
+                        max_candidates = self.video_config.get("visual_filter_max_candidates", 2) if avoid_filter else 1
 
                         chosen_file = None
                         selected_url = None
@@ -972,6 +972,47 @@ class VideoCreator:
             logger.warning(f"Gagal load logo watermark ({e}), video dibuat TANPA logo (fail-open).")
             return None
 
+    def _loudness_normalize_track(self, input_path):
+        """
+        Loudness-normalize (EBU R128 via ffmpeg 'loudnorm', target -14 LUFS
+        -- standar loudness umum platform streaming) file audio ke file
+        temp baru. Return path file yang sudah dinormalisasi.
+
+        KENAPA loudnorm, BUKAN peak-normalize (moviepy AudioNormalize)?
+        Track vokal nasheed ASLI (bukan nada sinus uji) punya DINAMIKA --
+        ada bagian pelan (jeda antar kata, nada sustain lembut) dan bagian
+        keras. Peak-normalize cuma menyamakan titik PALING KERAS ke 0dB,
+        tapi rata-rata loudness bagian yang MAYORITAS pelan tetap kedengaran
+        pelan secara persepsi -- inilah kemungkinan besar penyebab kenapa
+        volume 0.25-0.35 masih nyaris tidak terdengar untuk track vokal
+        asli, padahal di uji coba nada sinus (tanpa dinamika) terlihat
+        sangat efektif. loudnorm menormalisasi LOUDNESS RATA-RATA
+        (integrated LUFS), jauh lebih konsisten untuk konten vokal nyata.
+
+        Fail-open: kalau ffmpeg loudnorm gagal, return path ASLI (tidak
+        dinormalisasi) -- video tetap dibuat, musik latar mungkin lebih
+        pelan dari seharusnya, tapi TIDAK sampai video gagal total.
+        """
+        output_path = self.temp_dir / f"bg_normalized_{Path(input_path).stem}.wav"
+        try:
+            cmd = [
+                "ffmpeg", "-y", "-i", str(input_path),
+                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                "-ar", "44100",
+                str(output_path),
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            if result.returncode != 0 or not output_path.exists():
+                logger.warning(
+                    f"ffmpeg loudnorm gagal untuk {input_path} (exit {result.returncode}), "
+                    f"pakai file asli tanpa normalisasi loudness."
+                )
+                return input_path
+            return output_path
+        except Exception as e:
+            logger.warning(f"Gagal jalankan ffmpeg loudnorm untuk {input_path} ({e}), pakai file asli tanpa normalisasi.")
+            return input_path
+
     def create_video(self, script_data, voiceover_segments, language="id"):
         """
         Merakit video Shorts (1080x1920) dengan strategi HEMAT MEMORI:
@@ -1026,23 +1067,15 @@ class VideoCreator:
                 )
             else:
                 try:
-                    bg_track_full = AudioFileClip(str(bg_track_path))
-                    # Normalisasi peak SEBELUM dipakai -- tanpa ini, volume
-                    # efektif musik latar sangat tergantung loudness ASLI
-                    # tiap file (track dari sumber berbeda sering punya
-                    # loudness mentah yang beda jauh), jadi angka
-                    # background_audio_volume yang sama bisa kedengaran
-                    # keras di 1 track tapi nyaris tidak terdengar di track
-                    # lain. Normalisasi bikin semua track mulai dari
-                    # baseline volume yang SAMA sebelum di-multiply, jadi
-                    # hasilnya jauh lebih konsisten & bisa diprediksi.
-                    bg_track_full = bg_track_full.with_effects([afx.AudioNormalize()])
+                    normalized_path = self._loudness_normalize_track(bg_track_path)
+                    bg_track_full = AudioFileClip(str(normalized_path))
                     if bg_track_full.duration < self._MAX_BACKGROUND_AUDIO_DURATION:
                         bg_track_full = bg_track_full.with_effects(
                             [afx.AudioLoop(duration=self._MAX_BACKGROUND_AUDIO_DURATION)]
                         )
-                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name} (dinormalisasi).")
+                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name} (loudness-normalized -14 LUFS).")
                 except Exception as e:
+
                     logger.warning(f"Gagal load track musik latar {bg_track_path} ({e}), video dibuat TANPA musik latar (fail-open).")
                     bg_track_full = None
 
@@ -1070,7 +1103,7 @@ class VideoCreator:
             # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
             # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
             # gelap padahal Pexels-nya sendiri sehat-sehat saja.
-            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.25)
+            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.35)
             force_ai_image = random.random() < ai_image_ratio
 
             visual_prompt = scene.get("visual_prompt", "motivation")
