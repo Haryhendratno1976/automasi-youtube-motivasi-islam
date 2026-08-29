@@ -4,7 +4,9 @@ Main Entry Point v2.5 - AI Agent Multi-Language & Multi-Channel
 """
 
 import os
+import sys
 import time
+import argparse
 import logging
 
 # PALING ATAS, sebelum apapun lain: paksa timezone proses ke WIB (Asia/Jakarta).
@@ -449,6 +451,27 @@ def _schedule_random_jobs_for_language(language, time_ranges):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="AI Agent Multi-Channel Video Pipeline")
+    parser.add_argument(
+        "--once", action="store_true",
+        help="Jalankan pipeline SEKALI untuk 1 bahasa lalu keluar (skip scheduler) -- "
+             "dipakai untuk trigger manual, mis. dari tombol 'Generate All' di Telegram."
+    )
+    parser.add_argument(
+        "--language", choices=["id", "en"],
+        help="Bahasa yang mau dijalankan (WAJIB kalau --once dipakai)."
+    )
+    args = parser.parse_args()
+
+    if args.once:
+        if not args.language:
+            logger.error("--once butuh --language (id/en). Contoh: python main.py --once --language id")
+            sys.exit(1)
+        logger.info(f"Mode --once: jalankan pipeline {args.language.upper()} SEKALI lalu keluar (skip scheduler).")
+        job(args.language)
+        logger.info(f"Mode --once selesai untuk {args.language.upper()}.")
+        sys.exit(0)
+
     logger.info("AI Agent Multi-Channel Aktif...")
     
     config_data = {}
