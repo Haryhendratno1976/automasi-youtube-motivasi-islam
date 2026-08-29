@@ -81,9 +81,29 @@ class ContentResearcher:
         supaya pipeline tidak pernah berhenti total gara-gara riset.
         """
         keywords = self.research_config.get("keywords", {}).get(language, [])
-        niche = self.research_config.get("niche", {}).get(
-            language, "life motivation & self-discipline"
-        )
+
+        # Fallback niche kalau research.niche.<bahasa> HILANG dari config --
+        # dibuat CONTEXT-AWARE terhadap islamic_content_mode supaya kalau
+        # config.yaml ada typo/key hilang, sistem tetap fallback ke niche
+        # ISLAM (bukan diam-diam balik ke niche motivasi umum lama), plus
+        # warning eksplisit supaya masalah konfigurasinya ketahuan, bukan
+        # cuma silently generate topik dengan niche yang salah.
+        niche_config = self.research_config.get("niche", {})
+        if language not in niche_config:
+            default_niche = (
+                "Islamic motivation and Islamic education for everyday life (character, worship, practical wisdom)"
+                if self.islamic_content_mode else
+                "life motivation & self-discipline"
+            )
+            logger.warning(
+                f"research.niche.{language} tidak ditemukan di config.yaml -- "
+                f"pakai fallback default: '{default_niche}'. Cek config.yaml, "
+                f"kemungkinan ada typo di key 'niche'."
+            )
+            niche = default_niche
+        else:
+            niche = niche_config[language]
+
         region = self.research_config.get("region", {}).get(
             language, "Indonesia" if language == "id" else "United States"
         )
