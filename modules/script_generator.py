@@ -230,7 +230,37 @@ underlying rhetorical pattern, not just wording):
         niche_name = self.niche_label.get(language) or "Life Motivation"
 
         islamic_guidance = ""
-        if self.islamic_content_mode:
+        allow_citations = self.script_config.get("allow_famous_citations", True)
+        if self.islamic_content_mode and allow_citations:
+            islamic_guidance = """
+ISLAMIC CONTENT ACCURACY (non-negotiable, this is auto-published to a
+Muslim audience who will notice inaccuracies immediately -- credibility
+matters more than any single video):
+- You MAY quote a well-known ("masyhur"), widely-recognized Quran verse or
+  hadith when it strengthens the point -- quote/paraphrase the well-known
+  wording itself (e.g. "Allah berfirman bahwa sesungguhnya bersama
+  kesulitan ada kemudahan" or "Rasulullah ﷺ bersabda bahwa sebaik-baik
+  manusia adalah yang paling bermanfaat bagi orang lain"), followed by a
+  brief explanation of its meaning/application. This is expected and
+  valued in this niche -- ONLY use verses/hadith you are highly confident
+  are genuinely well-established and correctly worded; if unsure, fall
+  back to general Islamic values/wisdom in your own words instead of
+  guessing.
+- HOWEVER, do NOT cite a SPECIFIC reference number or exact collection
+  citation (e.g. writing out "QS Al-Baqarah: 153" as a precise chapter:verse
+  number, or "HR Bukhari no. 5027") -- this is where AI-generated citations
+  are MOST likely to be subtly wrong even when the underlying quote/hadith
+  itself is real and well-known (exact numbering is easy to misremember,
+  the wording/meaning is not). Quote the CONTENT, skip the precise number.
+- Do NOT take a position on sectarian/khilafiyah (disputed fiqh) issues
+  that different schools of thought disagree on -- stick to universally
+  agreed-upon values and character.
+- Avoid political topics or anything that could be divisive across
+  different Muslim communities.
+- Tone must be warm, reflective, and encouraging -- never preachy,
+  shaming, or judgmental. Acknowledge real struggle rather than lecturing.
+"""
+        elif self.islamic_content_mode:
             islamic_guidance = """
 ISLAMIC CONTENT ACCURACY (non-negotiable, this is auto-published to a
 Muslim audience who will notice inaccuracies immediately -- credibility
@@ -295,6 +325,19 @@ EMPHASIZE while speaking -- use commas for short natural pauses, periods
 to fully stop and reset tone, and vary sentence length (mix short punchy
 sentences with longer ones) rather than a uniform run of same-length
 sentences. Avoid super long single sentences with no internal punctuation.
+
+SCENE-TO-SCENE CONTINUITY (critical -- this is ONE continuous 30-45 second
+narration split into 5 scenes for editing purposes, NOT five disconnected
+mini-statements): each scene's narration MUST read as the direct
+continuation of the previous scene -- as if someone is speaking one
+unbroken train of thought, just paused at natural breakpoints. Before
+writing each scene, mentally re-read the PRECEDING scene's narration and
+make sure this one flows from it logically (same subject/story thread,
+consistent pronouns and references, no abrupt topic jumps, no repeating
+an idea already covered). If scene 3 introduces a struggle, scene 4's
+lesson must resolve THAT SPECIFIC struggle, not a generic unrelated one.
+Read all 5 scenes back-to-back mentally before finalizing -- if it doesn't
+sound like ONE coherent flowing story when read straight through, rewrite.
 
 STRUCTURE THE SCRIPT INTO EXACTLY 5 SCENES following this proven viral
 storytelling arc -- each scene maps to ONE beat below, in this order:
@@ -851,6 +894,23 @@ explanation text before or after), with this exact structure:
                     ],
                     "hashtags": ["#tawakal", "#ikhtiar", "#motivasiislami"],
                 },
+                {
+                    "title": f"Kisah Sahabat Nabi yang Mengubah Cara Pandang soal {topic}",
+                    "hook": "Ada sahabat Nabi yang pernah disiksa habis-habisan karena keyakinannya, tapi tidak pernah goyah.",
+                    "scenes": [
+                        ("hook", "Ada sahabat Nabi yang pernah disiksa habis-habisan karena keyakinannya, tapi tidak pernah goyah.",
+                         "Desert landscape at dawn, warm golden light, no people" if no_figures else "Cinematic desert dawn, warm golden light"),
+                        ("story", f"Di tengah penindasan yang berat, dia tetap teguh -- satu kata yang terus diucapkannya menjadi simbol keteguhan iman, persis seperti yang dibutuhkan siapa pun yang sedang berjuang dengan {topic}.",
+                         "Ancient architecture silhouette against sunset, no people" if no_figures else "Cinematic ancient architecture silhouette sunset"),
+                        ("emotion", "Bayangkan tekanan seberat itu -- tapi keyakinannya justru semakin kokoh, bukan semakin rapuh.",
+                         "Warm candlelight in a quiet room, no people" if no_figures else "Cinematic warm candlelight quiet room"),
+                        ("lesson", f"Kisah itu mengajarkan bahwa keteguhan hati soal {topic} bukan soal tidak pernah goyah, tapi soal tetap berpegang teguh meski berat.",
+                         "Sunrise over open horizon, no people" if no_figures else "Cinematic sunrise open horizon hopeful"),
+                        ("punchline", "Kalau seorang sahabat Nabi bisa setegar itu, kita juga bisa.",
+                         "Golden light breaking through clouds, no people" if no_figures else "Cinematic golden light breaking clouds triumphant"),
+                    ],
+                    "hashtags": ["#kisahsahabat", "#motivasiislami", "#keteguhaniman"],
+                },
             ],
             "en": [
                 {
@@ -903,6 +963,23 @@ explanation text before or after), with this exact structure:
                          "Warm glowing lantern at dusk, no people" if no_figures else "Cinematic warm glowing fire silhouette, bright determined figure"),
                     ],
                     "hashtags": ["#tawakkul", "#islamicmotivation", "#muslimmindset"],
+                },
+                {
+                    "title": f"A Companion's Story That Reframes {topic}",
+                    "hook": "One of the Prophet's companions endured brutal persecution for his faith, and never wavered.",
+                    "scenes": [
+                        ("hook", "One of the Prophet's companions endured brutal persecution for his faith, and never wavered.",
+                         "Desert landscape at dawn, warm golden light, no people" if no_figures else "Cinematic desert dawn, warm golden light"),
+                        ("story", f"Under immense pressure, he held firm -- one single word he kept repeating became a symbol of unshakable faith, the same steadiness anyone struggling with {topic} needs today.",
+                         "Ancient architecture silhouette against sunset, no people" if no_figures else "Cinematic ancient architecture silhouette sunset"),
+                        ("emotion", "Picture that kind of pressure -- yet his conviction only grew stronger, never weaker.",
+                         "Warm candlelight in a quiet room, no people" if no_figures else "Cinematic warm candlelight quiet room"),
+                        ("lesson", f"That story teaches that steadfastness in {topic} isn't about never wavering -- it's about holding on even when it's hard.",
+                         "Sunrise over open horizon, no people" if no_figures else "Cinematic sunrise open horizon hopeful"),
+                        ("punchline", "If a companion of the Prophet could stay that firm, so can we.",
+                         "Golden light breaking through clouds, no people" if no_figures else "Cinematic golden light breaking clouds triumphant"),
+                    ],
+                    "hashtags": ["#companionsoftheprophet", "#islamicmotivation", "#steadfastness"],
                 },
             ],
         }
