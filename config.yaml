@@ -7,7 +7,15 @@
 # Kalau GEMINI_API_KEY tidak diset/gagal, otomatis fallback ke bank topik
 # statis di dalam research.py (tetap jalan, cuma kurang variatif).
 research:
-  gemini_model: gemini-3.6-flash
+  # PENTING soal kuota: "gemini-3.6-flash" HANYA dapat 20 request/hari di
+  # free tier -- sangat mudah habis karena pipeline ini panggil Gemini
+  # berkali-kali per video (riset topik, script, judul/hashtag, gambar AI,
+  # DAN tiap cek filter visual "avoid_human_figures"). "gemini-2.5-flash-lite"
+  # dapat ~1.000-1.500 request/hari di free tier -- jauh lebih realistis
+  # untuk pipeline ini tanpa perlu bayar sama sekali. Kualitas sedikit di
+  # bawah 3.6-flash, tapi lebih baik generate AI asli terus-menerus
+  # daripada sering jatuh ke fallback template karena kuota habis.
+  gemini_model: gemini-2.5-flash-lite
 
   # WAJIB untuk niche Islam -- aktifkan supaya prompt riset topik dapat
   # instruksi tambahan (hindari topik sektarian/khilafiyah, jangan
@@ -50,18 +58,32 @@ research:
 # tetap dipersonalisasi per topik -- termasuk template khusus Islami kalau
 # islamic_content_guidelines aktif, lihat _build_fallback_script()).
 script_generator:
+  # WAJIB diset eksplisit di sini juga (terpisah dari research.gemini_model
+  # di atas) -- kalau kosong, default hardcoded-nya "gemini-3.6-flash"
+  # (cuma 20 request/hari free tier), padahal generate SCRIPT ini bagian
+  # paling banyak makan kuota di seluruh pipeline.
+  gemini_model: gemini-2.5-flash-lite
+
   style:
     id: "reflektif, hangat, dan menenangkan -- bukan menggurui/menghakimi"
     en: "reflective, warm, and calming -- not preachy or judgmental"
 
   # WAJIB untuk niche Islam -- aktifkan supaya:
-  # - Prompt Gemini dapat instruksi "ISLAMIC CONTENT ACCURACY" (larang
-  #   kutip nomor ayat/hadits spesifik, larang topik khilafiyah/sektarian)
+  # - Prompt Gemini dapat instruksi "ISLAMIC CONTENT ACCURACY" (boleh kutip
+  #   hadits/ayat MASYHUR + penjelasan, tapi larang nomor rujukan spesifik;
+  #   larang topik khilafiyah/sektarian -- lihat allow_famous_citations di
+  #   bawah kalau mau ubah balik ke "tanpa kutipan sama sekali")
   # - Hook type yang dipakai otomatis dari ISLAMIC_HOOK_TYPES (bukan
   #   HOOK_TYPES yang bertema stoic/Marcus Aurelius)
   # - Template fallback pakai versi Islami (bukan motivasi umum)
   # - Hashtag strategy disesuaikan (5-8 hashtag, bukan 8-12)
   islamic_content_guidelines: true
+
+  # true (default): boleh kutip ayat/hadits yang MASYHUR + penjelasan,
+  # TANPA nomor rujukan spesifik (mis. tanpa "HR Bukhari no. 5027").
+  # false: balik ke mode lama -- hindari kutipan sama sekali, fokus ke
+  # hikmah/nilai umum saja.
+  allow_famous_citations: true
 
   # Nama niche yang disisipkan ke prompt AI -- tanpa ini, kode fallback
   # ke "Life Motivation" secara default.
@@ -98,6 +120,13 @@ video_creator:
   # banyak kreator lain. 0.35 = 35% scene pakai gambar AI unik.
   ai_image_ratio: 0.35
 
+  # Berapa kandidat foto/video Pexels yang dicoba per-scene saat filter
+  # avoid_human_figures_in_visuals aktif, sebelum menyerah ke sumber lain.
+  # Tiap kandidat = 1 panggilan Gemini Vision (ikut kuota harian yang SAMA
+  # dengan riset/script/dll) -- turunkan kalau kuota sering habis, naikkan
+  # kalau ingin filter lebih ketat/akurat dan kuota longgar.
+  visual_filter_max_candidates: 2
+
   # ============================================================
   # MUSIK LATAR (nasheed vokal-only) -- OPT-IN
   # ============================================================
@@ -116,12 +145,13 @@ video_creator:
   # dibuat pipeline-nya) -- pipeline akan ROTASI otomatis antar track
   # supaya tidak kedengaran itu-itu saja tiap video.
   background_audio_enabled: true
-  # Volume musik latar RELATIF terhadap narasi (0.0 - 1.0). Narasi selalu
-  # di volume penuh; angka ini melemahkan musik latar supaya tidak
-  # menabrak kejelasan suara narator. 0.18 adalah titik awal yang aman --
-  # naik/turunkan sambil dengarkan hasil videonya, tergantung seberapa
-  # keras track nasheed yang kamu pakai.
-  background_audio_volume: 0.18
+  # Volume musik latar RELATIF terhadap narasi (0.0 - 1.0). Sejak musik
+  # latar di-loudness-normalize otomatis (ffmpeg loudnorm, -14 LUFS)
+  # sebelum di-multiply angka ini, hasilnya jauh lebih KONSISTEN & lebih
+  # TERDENGAR dibanding sebelumnya -- kalau dulu 0.25-0.35 nyaris tidak
+  # kedengaran, sekarang seharusnya sudah jelas terdengar. Coba mulai dari
+  # 0.25, dengarkan hasilnya, naik/turunkan dari situ.
+  background_audio_volume: 0.25
 
   # ============================================================
   # LOGO WATERMARK -- tampil di setiap video, pojok kanan atas
@@ -136,10 +166,24 @@ video_creator:
 
   tts:
     voices:
+      # Cuma 2 voice neural resmi utk Bahasa Indonesia dari Microsoft --
+      # ini SEMUA opsi yang ada, tidak ada yang "lebih natural" lagi utk
+      # id-ID selain 2 ini (keterbatasan edge-tts, bukan bug kode).
       id: ["id-ID-ArdiNeural", "id-ID-GadisNeural"]
+      # Ditambahkan voice generasi lebih baru yang menurut riset komunitas
+      # edge-tts konsisten dinilai PALING natural/tidak robotic:
+      # EmmaMultilingualNeural, AvaMultilingualNeural, GB-RyanNeural.
       en: ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
            "en-US-RogerNeural", "en-US-JennyNeural", "en-US-AriaNeural",
-           "en-US-AndrewNeural", "en-US-EmmaNeural"]
+           "en-US-AndrewNeural", "en-US-EmmaNeural",
+           "en-US-EmmaMultilingualNeural", "en-US-AvaMultilingualNeural",
+           "en-GB-RyanNeural"]
+    # Variasi rate/pitch KECIL, ACAK per-scene -- supaya suara tidak
+    # terdengar 100% flat/seragam di seluruh durasi (ciri khas TTS yang
+    # "kedengaran AI"). Rentang sengaja sempit supaya tetap terdengar
+    # seperti 1 narator yang sama, bukan berubah-ubah drastis.
+    rate_jitter_percent: 4   # +/- 4% kecepatan bicara
+    pitch_jitter_hz: 3       # +/- 3Hz nada suara
   subtitles:
     font_size: 60
     font_color: "white"
@@ -167,7 +211,7 @@ publishing:
 schedule:
   id:
     time_ranges:
-      - ["16:00", "16:30"]
+      - ["16:30", "17:00"]
       - ["05:00", "05:30"]
   en:
     time_ranges:
