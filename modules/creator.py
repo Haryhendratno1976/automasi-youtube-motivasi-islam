@@ -971,7 +971,7 @@ class VideoCreator:
         # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
         # terdengar menyambung setelah scene-scene di-concat.
         background_audio_enabled = self.video_config.get("background_audio_enabled", False)
-        background_audio_volume = self.video_config.get("background_audio_volume", 0.25)
+        background_audio_volume = self.video_config.get("background_audio_volume", 0.35)
         bg_track_full = None
         bg_track_path = None
         bg_cursor = 0.0
