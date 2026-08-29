@@ -199,6 +199,11 @@ class MotivationAgent:
         upload). Dipakai kalau publishing.require_manual_review aktif di
         config.yaml -- lihat catatan di run_pipeline soal kenapa ini penting
         untuk mitigasi risiko kebijakan YouTube.
+
+        Return: True kalau notifikasi Telegram BENAR-BENAR terkirim, False
+        kalau gagal (video tetap masuk antrian di reports/pending_review.json
+        baik terkirim maupun tidak -- cuma status notifikasi Telegram-nya
+        yang dilaporkan lewat return value ini).
         """
         import uuid
         os.makedirs("reports", exist_ok=True)
@@ -231,15 +236,25 @@ class MotivationAgent:
                 json.dump(pending, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Gagal menyimpan antrian review ke {pending_file}: {e}")
-            return
+            return False
 
-        if hasattr(self.notifier, 'send_review_request'):
-            safe_title = _sanitize_for_telegram_markdown(script.get("title", ""))
-            safe_hook = _sanitize_for_telegram_markdown(script.get("hook", ""))
-            try:
-                await self.notifier.send_review_request(review_id, safe_title, safe_hook, language, video_path=str(video_path))
-            except Exception as e:
-                logger.error(f"Gagal kirim permintaan review ke Telegram: {e}")
+        if not hasattr(self.notifier, 'send_review_request'):
+            return False
+
+        safe_title = _sanitize_for_telegram_markdown(script.get("title", ""))
+        safe_hook = _sanitize_for_telegram_markdown(script.get("hook", ""))
+        try:
+            # PENTING: tangkap & pakai return value-nya -- send_review_request()
+            # return False (BUKAN melempar exception) kalau token/chat_id
+            # Telegram tidak ditemukan di environment proses ini. Sebelumnya
+            # return value ini diabaikan sama sekali, jadi caller (run_pipeline)
+            # selalu log "berhasil terkirim" walau sebenarnya GAGAL total --
+            # video masuk antrian tanpa notifikasi apapun, tanpa ada yang tahu.
+            sent = await self.notifier.send_review_request(review_id, safe_title, safe_hook, language, video_path=str(video_path))
+            return bool(sent)
+        except Exception as e:
+            logger.error(f"Gagal kirim permintaan review ke Telegram: {e}")
+            return False
 
     async def run_pipeline(self, language="id"):
         """Menjalankan pipeline pembuatan dan posting video untuk bahasa tertentu."""
@@ -282,8 +297,27 @@ class MotivationAgent:
             # send_telegram_review_request), tidak perlu buka dashboard.
             require_review = self.config.get("publishing", {}).get("require_manual_review", False)
             if require_review:
-                await self._queue_for_review(script, video_path, language, description, native_tags, hashtags_str)
-                logger.info(f"Video ({language.upper()}) masuk antrian review manual, TIDAK auto-upload. Notifikasi + tombol approve/tolak dikirim ke Telegram.")
+                notif_sent = await self._queue_for_review(script, video_path, language, description, native_tags, hashtags_str)
+                if notif_sent:
+                    logger.info(f"Video ({language.upper()}) masuk antrian review manual, TIDAK auto-upload. Notifikasi + tombol approve/tolak dikirim ke Telegram.")
+                else:
+                    # JANGAN pura-pura sukses -- video TETAP masuk antrian
+                    # (tersimpan di reports/pending_review.json), tapi tanpa
+                    # notifikasi Telegram kamu tidak akan tahu ada video
+                    # menunggu kecuali cek dashboard /review manual. Paling
+                    # sering disebabkan proses ini (mis. service 'agent' yang
+                    # terpisah dari 'web' di Railway) tidak punya env var
+                    # TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID -- tiap service
+                    # Railway punya environment SENDIRI-SENDIRI, tidak
+                    # otomatis ikut service lain.
+                    logger.warning(
+                        f"Video ({language.upper()}) masuk antrian review (tersimpan di "
+                        f"reports/pending_review.json), TAPI notifikasi Telegram GAGAL "
+                        f"terkirim -- cek TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID ada di "
+                        f"environment proses INI (bukan cuma di service lain kalau kamu "
+                        f"pakai lebih dari 1 service Railway). Buka dashboard /review "
+                        f"untuk approve/tolak video ini secara manual sementara ini."
+                    )
                 logger.info(f"Pipeline {language.upper()} Selesai (menunggu review manual)!")
                 return
 
