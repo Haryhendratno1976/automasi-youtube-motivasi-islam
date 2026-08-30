@@ -182,7 +182,7 @@ class VideoCreator:
             return False
         try:
             response = self._gemini_client.models.generate_content(
-                model="gemini-3.6-flash",  # model teks+vision ringan -- BUKAN model image-gen (gemini_image_model)
+                model=self.video_config.get("vision_check_model", "gemini-2.5-flash-lite"),  # model teks+vision ringan utk klasifikasi YES/NO -- BUKAN model image-gen (gemini_image_model). Default flash-lite krn kuota gratis jauh lebih longgar & tugasnya sederhana (klasifikasi, bukan generate konten).
                 contents=[
                     genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     self._visual_filter_question(),
