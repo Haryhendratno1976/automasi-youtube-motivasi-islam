@@ -1050,7 +1050,7 @@ class VideoCreator:
         # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
         # terdengar menyambung setelah scene-scene di-concat.
         background_audio_enabled = self.video_config.get("background_audio_enabled", False)
-        background_audio_volume = self.video_config.get("background_audio_volume", 0.30)
+        background_audio_volume = self.video_config.get("background_audio_volume", 0.40)
         bg_track_full = None
         bg_track_path = None
         bg_cursor = 0.0
@@ -1103,7 +1103,7 @@ class VideoCreator:
             # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
             # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
             # gelap padahal Pexels-nya sendiri sehat-sehat saja.
-            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.35)
+            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.18)
             force_ai_image = random.random() < ai_image_ratio
 
             visual_prompt = scene.get("visual_prompt", "motivation")
