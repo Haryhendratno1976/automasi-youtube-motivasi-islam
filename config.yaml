@@ -58,11 +58,17 @@ research:
 # tetap dipersonalisasi per topik -- termasuk template khusus Islami kalau
 # islamic_content_guidelines aktif, lihat _build_fallback_script()).
 script_generator:
-  # WAJIB diset eksplisit di sini juga (terpisah dari research.gemini_model
-  # di atas) -- kalau kosong, default hardcoded-nya "gemini-3.6-flash"
-  # (cuma 20 request/hari free tier), padahal generate SCRIPT ini bagian
-  # paling banyak makan kuota di seluruh pipeline.
-  gemini_model: gemini-2.5-flash-lite
+  # Model UTAMA -- KHUSUS untuk generate NARASI/SCRIPT (bagian paling
+  # menentukan kualitas cerita). "gemini-3.6-flash" cuma 20 request/hari
+  # di free tier, TAPI karena di sini cuma dipanggil 1x per video, untuk
+  # 4 video/hari itu cuma 4 request/hari -- jauh di bawah limit, aman.
+  gemini_model: gemini-3.6-flash
+
+  # Model SEKUNDER -- untuk judul+hashtag (per video) dan brand hashtag
+  # (sekali seumur hidup, lihat brand_hashtag di bawah). Tidak butuh
+  # kualitas setinggi narasi, jadi dipisah ke model berkuota longgar
+  # supaya TIDAK ikut menggerus jatah 20/hari punya gemini_model di atas.
+  gemini_model_secondary: gemini-2.5-flash-lite
 
   style:
     id: "reflektif, hangat, dan menenangkan -- bukan menggurui/menghakimi"
@@ -126,6 +132,12 @@ video_creator:
   # dengan riset/script/dll) -- turunkan kalau kuota sering habis, naikkan
   # kalau ingin filter lebih ketat/akurat dan kuota longgar.
   visual_filter_max_candidates: 2
+
+  # Model Gemini KHUSUS untuk klasifikasi visual (avoid_human_figures dll)
+  # -- tugasnya cuma jawab YES/NO, tidak butuh model mahal/pintar. Default
+  # flash-lite (kuota paling longgar) SENGAJA dipisah dari gemini_model di
+  # atas (yang dipakai buat generate KONTEN, bukan klasifikasi).
+  vision_check_model: gemini-2.5-flash-lite
 
   # ============================================================
   # MUSIK LATAR (nasheed vokal-only) -- OPT-IN
