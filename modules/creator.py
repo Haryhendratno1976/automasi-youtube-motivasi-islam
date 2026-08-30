@@ -1103,7 +1103,7 @@ class VideoCreator:
             # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
             # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
             # gelap padahal Pexels-nya sendiri sehat-sehat saja.
-            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.18)
+            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.30)
             force_ai_image = random.random() < ai_image_ratio
 
             visual_prompt = scene.get("visual_prompt", "motivation")
