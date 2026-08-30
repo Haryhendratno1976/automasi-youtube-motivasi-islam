@@ -49,7 +49,19 @@ class ScriptGenerator:
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
         self.script_config = self.config.get("script_generator", {})
+        # Model UTAMA -- khusus untuk generate NARASI/SCRIPT (bagian yang
+        # paling menentukan kualitas cerita). Boleh diarahkan ke model
+        # berkuota ketat (mis. gemini-3.6-flash, 20 request/hari) karena
+        # cuma dipanggil 1x per video -- untuk 4 video/hari itu cuma 4
+        # request/hari, jauh di bawah limit.
         self.gemini_model_name = self.script_config.get("gemini_model", "gemini-3.6-flash")
+
+        # Model SEKUNDER -- untuk panggilan yang TIDAK butuh kualitas
+        # setinggi narasi tapi lebih sering/redundan (judul+hashtag per
+        # video, brand hashtag sekali seumur hidup) -- default ke model
+        # berkuota longgar supaya tidak ikut menggerus jatah harian model
+        # utama yang sengaja dihemat untuk narasi.
+        self.gemini_model_secondary = self.script_config.get("gemini_model_secondary", "gemini-2.5-flash-lite")
 
         # Nama niche buat ditampilkan di prompt -- dulu hardcoded "Life
         # Motivation niche", sekarang configurable lewat
@@ -309,12 +321,37 @@ dismisses real struggle (e.g. don't tell the audience their tiredness/pain
 that acknowledges struggle honestly while still offering a real way
 forward.
 {recent_patterns_block}{hook_type_block}
-RETENTION-FIRST WRITING (2026 Shorts algorithm ranks on watch-time
-percentage, not just views -- a Short that loses viewers early gets
-suppressed): every sentence must earn its place, no filler or repeated
-points. Front-load the most interesting idea. Make the ending feel
-COMPLETE and satisfying (not just cut off) so it invites rewatches --
-rewatches and saves matter more than likes now.
+RETENTION-FIRST WRITING (2026 Shorts algorithm ranks almost entirely on
+completion rate + loop rate, NOT view count or likes -- YouTube's actual
+2026 distribution gate is roughly 65-70% average-percentage-watched for
+a video this length; fall below that and the Short simply stops being
+shown to new people, no matter how good the topic is): every sentence
+must earn its place, no filler or repeated points -- this is your
+"density score", whether the value holds up after the hook. Front-load
+the most interesting idea. Never pad to fill time.
+
+THE FIRST 2 SECONDS DECIDE EVERYTHING (this is not an exaggeration --
+YouTube's own distribution testing weighs swipe-away rate in the first
+~2 seconds before almost anything else; a weak opening means the Short
+never reaches enough people for retention/rewatch/comments to even
+matter): scene 1's narration must deliver its payoff in the FIRST
+SENTENCE, not build up to it. No throat-clearing, no "have you ever
+felt...", no slow setup -- start on the most provocative, specific, or
+surprising word/phrase you have. If you can cut the first sentence in
+half and lose nothing, cut it.
+
+LOOP-ENDING (critical, high-value 2026 ranking technique -- Shorts
+auto-loop back to the start when they finish, and YouTube specifically
+tracks rewatches within ~2 seconds of the end as a strong positive
+signal, weighted similarly to a partial new view): write the PUNCHLINE
+(scene 5) so that it verbally or thematically CONNECTS BACK to the HOOK
+(scene 1) -- an echo, a callback, a word or image from the hook
+reappearing with new meaning, or a line that only fully lands once the
+viewer mentally re-hears the hook right after. The goal is that watching
+the video loop back to scene 1 immediately feels natural and rewarding,
+not like starting over -- as if the ending was secretly the setup for
+hearing the hook again. This is one of the single highest-leverage things
+you can do for distribution; do not skip it or treat it as optional.
 
 NARRATION PUNCTUATION FOR TTS (important -- this is read aloud by a
 text-to-speech engine, not displayed as plain text): the TTS engine reads
@@ -341,17 +378,20 @@ sound like ONE coherent flowing story when read straight through, rewrite.
 
 STRUCTURE THE SCRIPT INTO EXACTLY 5 SCENES following this proven viral
 storytelling arc -- each scene maps to ONE beat below, in this order:
-1. HOOK -- grab attention in the first 3 seconds. Provocative statement,
-   surprising claim, or a question that creates a curiosity gap.
+1. HOOK -- grab attention in the first 2 SECONDS, payoff in the very
+   first sentence. Provocative statement, surprising claim, or a question
+   that creates a curiosity gap. This line will also be echoed by the
+   punchline (see LOOP-ENDING above), so make it distinctive and memorable
+   enough to callback to.
 2. STORY -- set up a short, concrete, relatable story or scenario (a
    specific moment, not generic advice) that illustrates the topic.
 3. EMOTION -- the emotional turning point of that story: the struggle,
    the doubt, the low point, or the realization. Make the audience FEEL it.
 4. LESSON -- the actionable takeaway or insight the audience should learn
    from the story. Concrete and specific, not a vague platitude.
-5. PUNCHLINE -- a short, memorable closing line that lands hard and
-   reinforces the hook -- something quotable, plus an implicit call to
-   action (follow/save/share) without being cringey about it.
+5. PUNCHLINE -- a short, memorable closing line that lands hard AND loops
+   back to the hook (see LOOP-ENDING above) -- something quotable, plus an
+   implicit call to action (follow/save/share) without being cringey.
 """
 
         if self.avoid_human_figures:
@@ -578,7 +618,7 @@ text before or after) with this exact structure:
                     f"nothing else -- no explanation, no quotes."
                 )
                 response = self._gemini_client.models.generate_content(
-                    model=self.gemini_model_name,
+                    model=self.gemini_model_secondary,
                     contents=gen_prompt,
                     config=genai_types.GenerateContentConfig(
                         automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True)
@@ -676,7 +716,7 @@ explanation text before or after), with this exact structure:
                 )
 
             response = self._gemini_client.models.generate_content(
-                model=self.gemini_model_name,
+                model=self.gemini_model_secondary,
                 contents=prompt,
                 config=config,
             )
