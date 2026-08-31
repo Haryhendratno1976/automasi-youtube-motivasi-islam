@@ -166,6 +166,23 @@ video_creator:
   background_audio_volume: 0.35
 
   # ============================================================
+  # VARIAN VIDEO TEKS-ONLY (tanpa suara narator)
+  # ============================================================
+  # Peluang (0.0 - 1.0) sistem RANDOM memilih varian "text_only" alih-alih
+  # "voice" (narasi TTS) untuk tiap video yang di-generate. 0.2 = 20%
+  # video akan jadi teks-only (musik latar dibesarkan, tanpa suara
+  # narator, teks lebih besar/prominent di layar, durasi tiap scene
+  # dihitung dari estimasi kecepatan baca -- lihat
+  # _estimate_reading_duration() di creator.py). Set 0 utk matikan sama
+  # sekali (selalu voice), set 1.0 utk selalu text_only.
+  text_only_variant_ratio: 0.2
+
+  # Volume musik latar KHUSUS untuk varian text_only -- jauh lebih besar
+  # dari background_audio_volume di atas karena di sini musik latar
+  # SATU-SATUNYA elemen audio (tidak ada narasi yang perlu dilindungi).
+  background_audio_volume_text_only: 0.7
+
+  # ============================================================
   # LOGO WATERMARK -- tampil di setiap video, pojok kanan atas
   # ============================================================
   logo_watermark:
@@ -196,6 +213,18 @@ video_creator:
     # seperti 1 narator yang sama, bukan berubah-ubah drastis.
     rate_jitter_percent: 4   # +/- 4% kecepatan bicara
     pitch_jitter_hz: 3       # +/- 3Hz nada suara
+
+    # --- Khusus varian text_only (tidak dipakai kalau variant="voice") ---
+    # Kecepatan baca (kata/menit) yang dipakai buat hitung berapa lama tiap
+    # scene ditampilkan -- SENGAJA konservatif (di bawah kecepatan baca
+    # fokus normal ~200-250 wpm) karena ini dibaca sambil scroll di HP.
+    text_only_reading_wpm: 170
+    # Waktu tambahan (detik) di luar waktu baca murni -- kasih jeda buat
+    # penonton SADAR teks baru muncul sebelum mulai membaca.
+    text_only_reading_padding_sec: 0.7
+    # Durasi MINIMUM mutlak per-scene (detik) -- supaya teks pendek tidak
+    # berkedip terlalu cepat untuk sempat dibaca sama sekali.
+    text_only_min_scene_duration: 2.2
   subtitles:
     font_size: 60
     font_color: "white"
@@ -208,6 +237,10 @@ video_creator:
     # 0.55 sesuai permintaan.
     vertical_center_fraction: 0.55
     # font: "/path/ke/font-custom.ttf"   # opsional, default auto-detect DejaVu/Liberation/FreeSans
+    # Khusus varian text_only -- teks jadi KONTEN UTAMA (bukan subtitle
+    # pendamping suara), jadi dibuat lebih besar dari font_size di atas.
+    # 1.35 = 35% lebih besar.
+    text_only_font_size_multiplier: 1.35
 
 # --- 4. Jadwal posting (main.py) ---
 # Jadwal posting -- waktu ACAK di dalam tiap rentang, diacak ULANG setiap
