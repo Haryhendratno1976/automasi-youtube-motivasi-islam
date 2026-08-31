@@ -159,10 +159,16 @@ class ScriptGenerator:
         recent_types = [p.get("hook_type") for p in recent_patterns if p.get("hook_type")]
         return pick_underused_hook_type(recent_types, hook_types=self._hook_type_pool())
 
-    def generate_script(self, topic_data=None, language="id"):
+    def generate_script(self, topic_data=None, language="id", variant="voice"):
         """
         Menghasilkan script video short berdasarkan topik dan bahasa.
         Prioritas: Gemini AI. Fallback: template variatif per topik.
+
+        variant: "voice" (default, narasi diucapkan via TTS -- durasi scene
+        mengikuti panjang audio) ATAU "text_only" (tanpa suara narator,
+        teks ditampilkan di layar + musik latar dibesarkan -- durasi scene
+        dihitung dari estimasi kecepatan baca, teks boleh sedikit lebih
+        panjang karena tidak dibatasi ritme TTS).
         """
         topic = topic_data.get("topic", "Motivation") if topic_data else "Motivation for success"
 
@@ -192,28 +198,33 @@ class ScriptGenerator:
 
         script_json = None
         if self._gemini_ready:
-            script_json = self._generate_via_gemini(topic, language, recent_patterns, hook_type)
+            script_json = self._generate_via_gemini(topic, language, recent_patterns, hook_type, variant=variant)
 
         if script_json:
             logger.info(f"Script ({language.upper()}) berhasil di-generate menggunakan AI (Gemini).")
             self._save_recent_pattern(
                 language, script_json.get("title", ""), script_json.get("hook", ""), hook_type
             )
+            script_json["variant"] = variant
             return script_json
 
         # Fallback script -- tetap dipakai kalau Gemini gagal/tidak tersedia.
         # Catatan: template fallback pakai gaya hook-nya sendiri (bukan dari
         # hook_patterns.py), jadi hook_type disimpan sebagai None supaya
-        # tidak mendistorsi statistik diversity punya hook AI asli.
+        # tidak mendistorsi statistik diversity punya hook AI asli. Template
+        # yang sama dipakai untuk KEDUA variant -- creator.py yang
+        # menentukan apakah teksnya diucapkan (voice) atau ditampilkan
+        # (text_only), bukan isi scriptnya sendiri.
         logger.warning(
             "Script dibuat dari FALLBACK TEMPLATE, bukan AI. "
             "Video hasilnya akan jauh kurang bervariasi dibanding pakai AI asli."
         )
         fallback = self._build_fallback_script(topic, language)
         self._save_recent_pattern(language, fallback.get("title", ""), fallback.get("hook", ""), hook_type=None)
+        fallback["variant"] = variant
         return fallback
 
-    def _generate_via_gemini(self, topic, language, recent_patterns=None, hook_type=None):
+    def _generate_via_gemini(self, topic, language, recent_patterns=None, hook_type=None, variant="voice"):
         lang_name = "Bahasa Indonesia" if language == "id" else "English (Natural native style)"
         style = self.script_config.get("style", {}).get(language, "inspiring")
 
@@ -294,9 +305,23 @@ matters more than any single video):
   shaming, or judgmental. Acknowledge real struggle rather than lecturing.
 """
 
-        prompt = f"""Create a viral short video script (30-45 seconds TOTAL --
+        if variant == "text_only":
+            format_instruction = """Create a viral short video script for a TEXT-ONLY format (30-60
+seconds TOTAL -- there is no spoken narration, the narration text is
+displayed ON SCREEN and read silently by the viewer while background
+music plays, so pacing is driven by READING speed, not speaking speed).
+Because readers process text faster than they'd need to listen to it
+spoken, and there's no TTS rhythm constraint, each scene's text CAN be
+a bit longer/denser than a spoken-narration script would allow -- but
+still write for a QUICK, SCANNABLE read on a phone screen while
+scrolling, not a paragraph. Aim for roughly 1-2 short sentences per
+scene, never a wall of text."""
+        else:
+            format_instruction = """Create a viral short video script (30-45 seconds TOTAL --
 this exact range is critical for the YouTube Shorts algorithm's watch-time
-threshold, do not go under 25s or over 48s combined) in {lang_name} for the
+threshold, do not go under 25s or over 48s combined)"""
+
+        prompt = f"""{format_instruction} in {lang_name} for the
 {niche_name} niche.
 Specific topic: "{topic}".
 Style: {style}.
@@ -353,7 +378,7 @@ not like starting over -- as if the ending was secretly the setup for
 hearing the hook again. This is one of the single highest-leverage things
 you can do for distribution; do not skip it or treat it as optional.
 
-NARRATION PUNCTUATION FOR TTS (important -- this is read aloud by a
+{"ON-SCREEN TEXT READABILITY (important -- this text is DISPLAYED, not spoken -- there is no TTS engine reading it aloud): write each scene as a short, punchy, easily-scannable line or two -- the kind of text someone can read in one glance while scrolling. Prefer clear, complete short sentences over long/complex ones (a reader re-parsing a long sentence loses the beat, unlike a listener who has an entire spoken cadence to lean on). Still vary sentence length across scenes so it doesn't feel monotone, but bias toward SHORTER than you would for spoken narration." if variant == "text_only" else '''NARRATION PUNCTUATION FOR TTS (important -- this is read aloud by a
 text-to-speech engine, not displayed as plain text): the TTS engine reads
 intonation and pacing DIRECTLY from punctuation, so flat, run-on sentences
 with no punctuation produce flat, robotic-sounding speech. Write narration
@@ -361,7 +386,7 @@ with natural punctuation the way a real person would actually PAUSE and
 EMPHASIZE while speaking -- use commas for short natural pauses, periods
 to fully stop and reset tone, and vary sentence length (mix short punchy
 sentences with longer ones) rather than a uniform run of same-length
-sentences. Avoid super long single sentences with no internal punctuation.
+sentences. Avoid super long single sentences with no internal punctuation.'''}
 
 SCENE-TO-SCENE CONTINUITY (critical -- this is ONE continuous 30-45 second
 narration split into 5 scenes for editing purposes, NOT five disconnected
