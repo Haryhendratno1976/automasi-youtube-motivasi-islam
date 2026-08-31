@@ -262,12 +262,21 @@ class MotivationAgent:
         """Menjalankan pipeline pembuatan dan posting video untuk bahasa tertentu."""
         logger.info(f"--- MEMULAI PIPELINE ({language.upper()}) ---")
         try:
+            # 0. Pilih VARIAN video secara acak -- "voice" (narasi TTS,
+            # default/mayoritas) atau "text_only" (tanpa suara narator,
+            # teks besar di layar + musik latar dibesarkan). Rasio
+            # configurable lewat video_creator.text_only_variant_ratio
+            # (default 0.2 = 20% kemungkinan text_only per video).
+            text_only_ratio = self.config.get("video_creator", {}).get("text_only_variant_ratio", 0.2)
+            variant = "text_only" if random.random() < text_only_ratio else "voice"
+            logger.info(f"Variant video terpilih: '{variant}' (peluang text_only: {text_only_ratio*100:.0f}%)")
+
             # 1. Research Topik Unik
             top_insight = self.get_unique_topic(language)
             logger.info(f"Topik terpilih: {top_insight.get('topic')}")
             
             # 2. Script (via Gemini AI, lengkap dengan hook -- lihat script_generator.py)
-            script = self.generator.generate_script(top_insight, language)
+            script = self.generator.generate_script(top_insight, language, variant=variant)
 
             # 2b. Judul & hashtag yang DIOPTIMASI KHUSUS untuk potensi viral,
             # berdasarkan hasil research (bukan cuma judul "seadanya" dari
@@ -280,9 +289,15 @@ class MotivationAgent:
             script["suggested_hashtags"] = title_data["hashtags"]
             logger.info(f"Judul dipakai: '{script['title']}' | Hashtags: {script['suggested_hashtags']}")
             
-            # 3. Creator: voiceover -> video
-            vo_segments = await self.creator.generate_voiceover(script, language)
-            video_path = self.creator.create_video(script, vo_segments, language)
+            # 3. Creator: voiceover -> video. Untuk variant="text_only" TIDAK
+            # ada voiceover TTS sama sekali (hemat pemanggilan edge_tts juga)
+            # -- durasi tiap scene dihitung dari estimasi kecepatan baca di
+            # dalam create_video() sendiri.
+            if variant == "text_only":
+                vo_segments = None
+            else:
+                vo_segments = await self.creator.generate_voiceover(script, language)
+            video_path = self.creator.create_video(script, vo_segments, language, variant=variant)
 
             hashtags = script.get("suggested_hashtags") or ["#shorts", "#motivation"]
             hashtags_str = " ".join(hashtags)
