@@ -16,7 +16,7 @@ import warnings
 import time
 from io import BytesIO
 from pathlib import Path
-from moviepy import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, CompositeAudioClip, ColorClip, ImageClip, vfx, afx
+from moviepy import VideoFileClip, AudioFileClip, AudioClip, TextClip, CompositeVideoClip, CompositeAudioClip, ColorClip, ImageClip, vfx, afx
 from moviepy.video.fx import Resize, Crop
 from PIL import ImageFont, Image, ImageDraw
 import edge_tts
@@ -1013,7 +1013,30 @@ class VideoCreator:
             logger.warning(f"Gagal jalankan ffmpeg loudnorm untuk {input_path} ({e}), pakai file asli tanpa normalisasi.")
             return input_path
 
-    def create_video(self, script_data, voiceover_segments, language="id"):
+    def _estimate_reading_duration(self, text, language="id"):
+        """
+        Estimasi berapa lama teks ini perlu ditampilkan di layar supaya
+        nyaman dibaca (dipakai untuk variant="text_only", pengganti durasi
+        dari file audio TTS yang tidak ada di variant ini).
+
+        Formula: jumlah kata / kecepatan baca (kata/menit) + padding tetap.
+        Kecepatan baca SENGAJA dibuat konservatif (lebih lambat dari
+        kecepatan baca fokus normal ~200-250 wpm) karena ini dibaca sambil
+        scroll di HP, bukan membaca santai -- orang butuh waktu ekstra
+        untuk sekadar MENYADARI teks baru muncul sebelum mulai membaca.
+        Ada juga batas minimum mutlak per-scene supaya teks pendek tidak
+        berkedip terlalu cepat untuk sempat dibaca sama sekali.
+        """
+        tts_cfg = self.video_config.get("tts", {})
+        reading_wpm = tts_cfg.get("text_only_reading_wpm", 170)
+        padding_sec = tts_cfg.get("text_only_reading_padding_sec", 0.7)
+        min_duration = tts_cfg.get("text_only_min_scene_duration", 2.2)
+
+        word_count = len(text.split()) if text else 0
+        duration = (word_count / max(reading_wpm, 1)) * 60 + padding_sec
+        return max(min_duration, duration)
+
+    def create_video(self, script_data, voiceover_segments=None, language="id", variant="voice"):
         """
         Merakit video Shorts (1080x1920) dengan strategi HEMAT MEMORI:
         render tiap scene SATU PER SATU ke file mp4 kecil sendiri-sendiri
@@ -1029,16 +1052,25 @@ class VideoCreator:
         beresolusi tinggi. Dengan render per-scene, paling banyak cuma
         1 scene yang aktif di memori kapan pun.
 
-        voiceover_segments: list path .mp3 per scene, durasi tiap scene
-        diukur LANGSUNG dari file audio asli (bukan estimasi AI) supaya
-        subtitle & visual selalu sinkron persis dengan narasi.
+        voiceover_segments: list path .mp3 per scene (WAJIB untuk
+        variant="voice", diabaikan untuk variant="text_only"). Durasi tiap
+        scene diukur LANGSUNG dari file audio asli (bukan estimasi AI)
+        supaya subtitle & visual selalu sinkron persis dengan narasi.
+
+        variant: "voice" (default, narasi diucapkan TTS) ATAU "text_only"
+        (tanpa suara narator -- teks ditampilkan lebih besar/prominent di
+        layar, musik latar dibesarkan volumenya jadi elemen audio utama,
+        durasi tiap scene dihitung dari estimasi kecepatan baca lewat
+        _estimate_reading_duration()).
         """
-        logger.info(f"Merakit video final ({language.upper()})...")
+        logger.info(f"Merakit video final ({language.upper()}, variant={variant})...")
         self._cleanup_old_outputs()
 
         scenes = script_data.get("scenes", [])
-        if not voiceover_segments:
-            raise ValueError("voiceover_segments kosong -- tidak ada audio untuk dirakit jadi video.")
+        if variant == "voice" and not voiceover_segments:
+            raise ValueError("voiceover_segments kosong -- tidak ada audio untuk dirakit jadi video (variant='voice').")
+        if variant == "text_only" and not scenes:
+            raise ValueError("scenes kosong -- tidak ada apapun untuk dirakit jadi video (variant='text_only').")
 
         fps = self.video_config.get("fps", 30)
         downloaded_footage_paths = []
@@ -1049,12 +1081,21 @@ class VideoCreator:
         # sini (bukan per-scene), lalu dipotong per-scene berdasarkan
         # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
         # terdengar menyambung setelah scene-scene di-concat.
-        background_audio_enabled = self.video_config.get("background_audio_enabled", False)
-        background_audio_volume = self.video_config.get("background_audio_volume", 0.40)
+        #
+        # variant="text_only": musik latar BUKAN cuma opsional pemanis --
+        # ini SATU-SATUNYA elemen audio (tidak ada narasi TTS), jadi
+        # dipaksa aktif & volumenya dibesarkan jauh di atas default mode
+        # suara (lihat background_audio_volume_text_only).
+        if variant == "text_only":
+            background_audio_enabled = True
+            background_audio_volume = self.video_config.get("background_audio_volume_text_only", 0.7)
+        else:
+            background_audio_enabled = self.video_config.get("background_audio_enabled", False)
+            background_audio_volume = self.video_config.get("background_audio_volume", 0.18)
         bg_track_full = None
         bg_track_path = None
         bg_cursor = 0.0
-        total_scene_count = min(len(voiceover_segments), len(scenes))
+        total_scene_count = len(scenes) if variant == "text_only" else min(len(voiceover_segments), len(scenes))
 
         if background_audio_enabled:
             bg_track_path = self._pick_background_audio_path()
@@ -1083,16 +1124,22 @@ class VideoCreator:
 
         logo_base_clip = self._load_logo_watermark_clip()
 
-        for idx, seg_path in enumerate(voiceover_segments):
-            if idx >= len(scenes):
-                break
+        loop_range = range(len(scenes)) if variant == "text_only" else range(min(len(voiceover_segments), len(scenes)))
+
+        for idx in loop_range:
             scene = scenes[idx]
 
-            seg_audio = AudioFileClip(str(seg_path))
-            scene_duration = seg_audio.duration
-            if scene_duration <= 0:
-                seg_audio.close()
-                continue
+            if variant == "voice":
+                seg_path = voiceover_segments[idx]
+                seg_audio = AudioFileClip(str(seg_path))
+                scene_duration = seg_audio.duration
+                if scene_duration <= 0:
+                    seg_audio.close()
+                    continue
+            else:
+                seg_audio = None
+                narration_text_for_duration = scene.get("narration", "").strip()
+                scene_duration = self._estimate_reading_duration(narration_text_for_duration, language)
 
             # YouTube 2026 punya "visual uniqueness filter" yang menurunkan
             # ranking video yang pakai stock footage generik sama seperti
@@ -1103,7 +1150,7 @@ class VideoCreator:
             # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
             # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
             # gelap padahal Pexels-nya sendiri sehat-sehat saja.
-            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.30)
+            ai_image_ratio = self.video_config.get("ai_image_ratio", 0.35)
             force_ai_image = random.random() < ai_image_ratio
 
             visual_prompt = scene.get("visual_prompt", "motivation")
@@ -1256,6 +1303,11 @@ class VideoCreator:
                 raw_text = scene.get("narration", "").strip()
 
                 font_size = sub_config.get("font_size", 60)
+                if variant == "text_only":
+                    # Teks jadi KONTEN UTAMA (bukan subtitle pendamping suara),
+                    # jadi dibuat lebih besar & lebih menonjol -- faktor
+                    # pembesaran configurable, default 1.35x.
+                    font_size = int(font_size * sub_config.get("text_only_font_size_multiplier", 1.35))
                 text_max_width = sub_config.get("max_width", 900)
                 font_path = resolve_font_path(sub_config.get("font"))
                 if not font_path:
@@ -1306,7 +1358,32 @@ class VideoCreator:
 
             scene_composite = CompositeVideoClip(scene_layers, size=(1080, 1920)).with_duration(scene_duration)
 
-            if bg_track_full is not None:
+            if variant == "text_only":
+                # Tidak ada narasi TTS -- musik latar (kalau ada) jadi
+                # SATU-SATUNYA audio, volume sudah di-boost di atas
+                # (background_audio_volume_text_only). Kalau tidak ada
+                # track musik sama sekali, buat audio SENYAP eksplisit
+                # (bukan skip with_audio() sama sekali) supaya semua scene
+                # tetap punya stream audio AAC yang konsisten untuk
+                # ffmpeg concat nanti -- beberapa pemutar/pipeline lebih
+                # rewel soal file video tanpa stream audio sama sekali.
+                if bg_track_full is not None:
+                    try:
+                        bg_slice = self._get_background_audio_slice(bg_track_full, bg_cursor, scene_duration)
+                        bg_slice = bg_slice.with_effects([afx.MultiplyVolume(background_audio_volume)])
+                        if idx == 0:
+                            bg_slice = bg_slice.with_effects([afx.AudioFadeIn(1.0)])
+                        if idx == total_scene_count - 1:
+                            bg_slice = bg_slice.with_effects([afx.AudioFadeOut(1.5)])
+                        scene_composite = scene_composite.with_audio(bg_slice)
+                    except Exception as e:
+                        logger.warning(f"Scene {idx}: gagal mixing musik latar utk variant text_only ({e}), pakai audio senyap.")
+                        silent = AudioClip(lambda t: [0, 0], duration=scene_duration, fps=44100)
+                        scene_composite = scene_composite.with_audio(silent)
+                else:
+                    silent = AudioClip(lambda t: [0, 0], duration=scene_duration, fps=44100)
+                    scene_composite = scene_composite.with_audio(silent)
+            elif bg_track_full is not None:
                 try:
                     bg_slice = self._get_background_audio_slice(bg_track_full, bg_cursor, scene_duration)
                     bg_slice = bg_slice.with_effects([afx.MultiplyVolume(background_audio_volume)])
@@ -1346,7 +1423,8 @@ class VideoCreator:
                 if raw_clip_to_close:
                     try: raw_clip_to_close.close()
                     except: pass
-                seg_audio.close()
+                if seg_audio is not None:
+                    seg_audio.close()
                 if bg_track_full is not None:
                     try: bg_track_full.close()
                     except: pass
@@ -1361,7 +1439,8 @@ class VideoCreator:
                 if raw_clip_to_close:
                     try: raw_clip_to_close.close()
                     except: pass
-                seg_audio.close()
+                if seg_audio is not None:
+                    seg_audio.close()
 
             self._log_available_memory(f"setelah render scene {idx}")
 
@@ -1383,7 +1462,7 @@ class VideoCreator:
         for fp in downloaded_footage_paths:
             try: Path(fp).unlink(missing_ok=True)
             except Exception: pass
-        for p in voiceover_segments:
+        for p in (voiceover_segments or []):
             try: Path(p).unlink(missing_ok=True)
             except Exception: pass
 
