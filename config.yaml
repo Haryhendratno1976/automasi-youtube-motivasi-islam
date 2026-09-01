@@ -202,7 +202,7 @@ video_creator:
     # fallback ke edge-tts untuk scene itu SAJA -- video tetap selesai,
     # cuma scene itu suaranya edge-tts, bukan Gemini. Estimasi biaya kalau
     # kena tarif berbayar: <$0.01/video, ~$1/bulan utk 4 video/hari.
-    tts_engine: edge_tts
+    tts_engine:gemini
     gemini_tts_model: gemini-2.5-flash-preview-tts
     voices:
       # Cuma 2 voice neural resmi utk Bahasa Indonesia dari Microsoft --
