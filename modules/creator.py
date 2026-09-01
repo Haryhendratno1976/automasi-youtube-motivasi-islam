@@ -12,6 +12,7 @@ import requests
 import random
 import shutil
 import subprocess
+import wave
 import warnings
 import time
 from io import BytesIO
@@ -440,6 +441,81 @@ class VideoCreator:
         top = (new_h - target_h) // 2
         return img.crop((left, top, left + target_w, top + target_h))
 
+    # Instruksi gaya bicara per BEAT cerita (hook/story/emotion/lesson/
+    # punchline) -- Gemini TTS native dikontrol via instruksi bahasa alami
+    # yang disisipkan di depan teks (bukan cuma rate/pitch numerik seperti
+    # edge-tts), jadi bisa benar-benar mengubah GAYA penyampaian per scene
+    # -- ini yang bikin hasilnya berpotensi jauh lebih ekspresif/manusiawi
+    # dibanding edge-tts yang nadanya rata di seluruh video.
+    _GEMINI_TTS_STYLE_BY_BEAT = {
+        "hook": "Say in an attention-grabbing, slightly urgent tone:",
+        "story": "Say in a warm, storytelling tone, like sharing a personal memory:",
+        "emotion": "Say slowly and with genuine heartfelt emotion:",
+        "lesson": "Say clearly and thoughtfully, like explaining something important:",
+        "punchline": "Say with quiet conviction, like the closing line of a speech:",
+    }
+
+    async def _generate_scene_audio_gemini_tts(self, text, voice, story_beat=None):
+        """
+        Generate audio narasi 1 scene lewat Gemini TTS NATIVE (BUKAN
+        edge-tts) -- model gemini-2.5-flash-preview-tts (configurable),
+        dikontrol via instruksi gaya bicara bahasa alami per BEAT cerita
+        (lihat _GEMINI_TTS_STYLE_BY_BEAT).
+
+        Gemini TTS API masih berstatus PREVIEW (per Agustus 2026) -- rate
+        limit belum terkonfirmasi longgar, jadi fungsi ini SENGAJA
+        melempar exception ke atas kalau gagal (bukan fail-open di sini),
+        supaya caller (generate_voiceover) bisa fallback ke edge-tts per
+        scene. Ini beda dari filosofi fail-open di tempat lain (mis. filter
+        visual) -- di sini kegagalan HARUS terdeteksi supaya fallback-nya
+        benar-benar jalan, bukan diam-diam menghasilkan audio kosong.
+
+        Return: Path file .wav hasil generate.
+        """
+        if not self._gemini_image_ready:
+            raise RuntimeError("Gemini client tidak siap (GEMINI_API_KEY tidak diset/gagal konfigurasi).")
+
+        style_instruction = self._GEMINI_TTS_STYLE_BY_BEAT.get(story_beat, "Say in a natural, warm, conversational tone:")
+        full_text = f"{style_instruction} {text}"
+        model = self.video_config.get("gemini_tts_model", "gemini-2.5-flash-preview-tts")
+
+        def _call_gemini_tts():
+            return self._gemini_client.models.generate_content(
+                model=model,
+                contents=full_text,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=genai_types.SpeechConfig(
+                        voice_config=genai_types.VoiceConfig(
+                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
+                        )
+                    ),
+                    automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
+                ),
+            )
+
+        # Panggilan Gemini TTS ini SINKRON (blocking), padahal fungsi ini
+        # async -- jalankan di thread terpisah (asyncio.to_thread) supaya
+        # tidak memblokir event loop bot Telegram/scheduler yang jalan
+        # bersamaan di proses yang sama.
+        response = await asyncio.to_thread(_call_gemini_tts)
+
+        pcm_data = response.candidates[0].content.parts[0].inline_data.data
+        if not pcm_data:
+            raise RuntimeError("Respons Gemini TTS tidak mengandung data audio.")
+
+        seg_path = self.temp_dir / f"voiceover_gemini_{random.randint(10000,99999)}.wav"
+        # Spesifikasi output Gemini TTS: PCM mentah 24kHz, 16-bit, mono --
+        # perlu dibungkus header WAV manual (modul 'wave' bawaan Python)
+        # supaya bisa dibaca AudioFileClip/ffmpeg seperti file audio biasa.
+        with wave.open(str(seg_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit = 2 byte
+            wf.setframerate(24000)
+            wf.writeframes(pcm_data)
+
+        return seg_path
+
     async def generate_voiceover(self, script_data, language="id"):
         """
         Menghasilkan voiceover PER SCENE (bukan 1 file gabungan untuk semua
@@ -504,7 +580,16 @@ class VideoCreator:
         base_pitch_num = _parse_numeric(base_pitch_str, "Hz")
 
         scenes = script_data.get("scenes", [])
-        logger.info(f"Menghasilkan voiceover ({language.upper()}) per-scene ({len(scenes)} segmen) menggunakan suara: {voice}")
+        tts_engine = self.video_config.get("tts_engine", "edge_tts")
+        logger.info(f"Menghasilkan voiceover ({language.upper()}) per-scene ({len(scenes)} segmen) -- engine: {tts_engine}, suara edge-tts cadangan: {voice}")
+
+        # Voice Gemini TTS -- dipilih SEKALI juga (konsisten 1 narator per
+        # video, sama seperti voice edge-tts di atas). Daftar voice resmi
+        # Gemini TTS ada 30+ nama (mis. "Kore", "Puck", "Charon", dst) --
+        # configurable, dengan default yang cukup netral/aman.
+        gemini_voices_config = self.video_config.get("tts", {}).get("gemini_voices", {})
+        gemini_voice_list = gemini_voices_config.get(language) or ["Kore", "Puck", "Charon", "Fenrir", "Aoede"]
+        gemini_voice = random.choice(gemini_voice_list)
 
         segment_paths = []
         for i, scene in enumerate(scenes):
@@ -512,6 +597,21 @@ class VideoCreator:
             if not text:
                 continue
             seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
+
+            if tts_engine == "gemini":
+                try:
+                    gemini_seg_path = await self._generate_scene_audio_gemini_tts(
+                        text, gemini_voice, story_beat=scene.get("story_beat")
+                    )
+                    segment_paths.append(gemini_seg_path)
+                    continue
+                except Exception as e:
+                    # Fail-open KHUSUS DI SINI (beda dari exception di
+                    # dalam _generate_scene_audio_gemini_tts sendiri yang
+                    # sengaja tidak fail-open) -- kalau Gemini TTS gagal
+                    # utk scene ini (kuota preview habis, dsb), turun ke
+                    # edge-tts utk scene ini SAJA, video tetap jalan.
+                    logger.warning(f"Scene {i}: Gemini TTS gagal ({e}), fallback ke edge-tts untuk scene ini.")
 
             # Hitung rate/pitch acak KECIL untuk scene ini saja (beda tiap
             # scene, tapi masih di sekitar base_rate/base_pitch dari config).
