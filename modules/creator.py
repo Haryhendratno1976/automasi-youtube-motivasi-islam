@@ -599,8 +599,8 @@ class VideoCreator:
             # ==============================================================
             # TAMBAHKAN KODE PENYESUAIAN PELAFALAN DI SINI
             # ==============================================================
-            text = text.replace("Allah", "Owlloh").replace("Rasulullah", "Rosululloh")
-            text = text.replace("allah", "owlloh").replace("rasulullah", "rosululloh")
+            text = text.replace("Allah", "Awlloh").replace("Rasulullah", "Rosululloh")
+            text = text.replace("allah", "awlloh").replace("rasulullah", "rosululloh")
             # ==============================================================
             seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
 
