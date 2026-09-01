@@ -10,12 +10,12 @@ research:
   # PENTING soal kuota: "gemini-3.6-flash" HANYA dapat 20 request/hari di
   # free tier -- sangat mudah habis karena pipeline ini panggil Gemini
   # berkali-kali per video (riset topik, script, judul/hashtag, gambar AI,
-  # DAN tiap cek filter visual "avoid_human_figures"). "gemini-2.5-flash-lite"
+  # DAN tiap cek filter visual "avoid_human_figures"). "gemini-3.5-flash-lite"
   # dapat ~1.000-1.500 request/hari di free tier -- jauh lebih realistis
   # untuk pipeline ini tanpa perlu bayar sama sekali. Kualitas sedikit di
   # bawah 3.6-flash, tapi lebih baik generate AI asli terus-menerus
   # daripada sering jatuh ke fallback template karena kuota habis.
-  gemini_model: gemini-2.5-flash-lite
+  gemini_model: gemini-3.5-flash-lite
 
   # WAJIB untuk niche Islam -- aktifkan supaya prompt riset topik dapat
   # instruksi tambahan (hindari topik sektarian/khilafiyah, jangan
@@ -68,7 +68,7 @@ script_generator:
   # (sekali seumur hidup, lihat brand_hashtag di bawah). Tidak butuh
   # kualitas setinggi narasi, jadi dipisah ke model berkuota longgar
   # supaya TIDAK ikut menggerus jatah 20/hari punya gemini_model di atas.
-  gemini_model_secondary: gemini-2.5-flash-lite
+  gemini_model_secondary: gemini-3.5-flash-lite
 
   style:
     id: "reflektif, hangat, dan menenangkan -- bukan menggurui/menghakimi"
@@ -119,11 +119,26 @@ video_creator:
   avoid_women_in_visuals: false   # tidak perlu, sudah tercakup di atas
 
   fps: 30
+  # PENTING (per Sept 2026): generate gambar AI Gemini (Nano Banana /
+  # gemini-3.1-flash-image dan semua variannya) SEKARANG TIDAK PUNYA TIER
+  # GRATIS SAMA SEKALI lewat Developer API standar -- beda dari model teks
+  # (gemini-3.6-flash dkk) yang masih gratis. Kalau GEMINI_API_KEY kamu
+  # belum aktifkan billing, SEMUA percobaan generate gambar AI akan selalu
+  # gagal dengan quota limit: 0 -- ini BUKAN bug, video tetap jalan normal
+  # (fail-open otomatis ke Pexels), tapi berarti fitur "ai_image_ratio" di
+  # bawah efektifnya TIDAK PERNAH benar-benar aktif tanpa billing.
+  # Estimasi biaya kalau mau AKTIFKAN billing & benar-benar pakai fitur
+  # ini: ~$0.067/gambar (resolusi 1K, model gemini-3.1-flash-image) --
+  # untuk ai_image_ratio 0.35 x 5 scene x 4 video/hari x 30 hari, kira-kira
+  # ~210 gambar/bulan = ~$14/bulan. Kalau tidak mau bayar sama sekali,
+  # set ai_image_ratio ke 0 di bawah supaya tidak buang-buang waktu
+  # request yang pasti gagal (video tetap 100% pakai Pexels, tidak masalah).
   gemini_image_model: gemini-3.1-flash-image
   # Persentase scene yang SENGAJA pakai gambar AI (bukan Pexels) walau
   # Pexels tersedia -- mitigasi "visual uniqueness filter" YouTube 2026
   # yang menurunkan ranking video ber-footage generik yang sama dipakai
-  # banyak kreator lain. 0.35 = 35% scene pakai gambar AI unik.
+  # banyak kreator lain. 0.35 = 35% scene pakai gambar AI unik -- TAPI
+  # lihat catatan billing di atas, ini butuh billing aktif buat benar2 jalan.
   ai_image_ratio: 0.35
 
   # Berapa kandidat foto/video Pexels yang dicoba per-scene saat filter
@@ -137,7 +152,7 @@ video_creator:
   # -- tugasnya cuma jawab YES/NO, tidak butuh model mahal/pintar. Default
   # flash-lite (kuota paling longgar) SENGAJA dipisah dari gemini_model di
   # atas (yang dipakai buat generate KONTEN, bukan klasifikasi).
-  vision_check_model: gemini-2.5-flash-lite
+  vision_check_model: gemini-3.5-flash-lite
 
   # ============================================================
   # MUSIK LATAR (nasheed vokal-only) -- OPT-IN
