@@ -163,7 +163,7 @@ video_creator:
   # TERDENGAR dibanding sebelumnya -- kalau dulu 0.25-0.35 nyaris tidak
   # kedengaran, sekarang seharusnya sudah jelas terdengar. Coba mulai dari
   # 0.25, dengarkan hasilnya, naik/turunkan dari situ.
-  background_audio_volume: 0.35
+  background_audio_volume: 0.25
 
   # ============================================================
   # VARIAN VIDEO TEKS-ONLY (tanpa suara narator)
@@ -194,6 +194,16 @@ video_creator:
     opacity: 1.0             # 1.0 = solid penuh, turunkan (mis. 0.8) utk semi-transparan
 
   tts:
+    # Engine TTS -- "edge_tts" (default, gratis, terbukti stabil) atau
+    # "gemini" (native Gemini TTS -- lebih ekspresif/natural, gaya bicara
+    # beda per-scene sesuai beat cerita, TAPI API-nya masih berstatus
+    # PREVIEW per Agustus 2026, kuota belum pasti longgar). Kalau
+    # "gemini" gagal di scene manapun (kuota habis, dll), OTOMATIS
+    # fallback ke edge-tts untuk scene itu SAJA -- video tetap selesai,
+    # cuma scene itu suaranya edge-tts, bukan Gemini. Estimasi biaya kalau
+    # kena tarif berbayar: <$0.01/video, ~$1/bulan utk 4 video/hari.
+    tts_engine: edge_tts
+    gemini_tts_model: gemini-2.5-flash-preview-tts
     voices:
       # Cuma 2 voice neural resmi utk Bahasa Indonesia dari Microsoft --
       # ini SEMUA opsi yang ada, tidak ada yang "lebih natural" lagi utk
@@ -207,6 +217,16 @@ video_creator:
            "en-US-AndrewNeural", "en-US-EmmaNeural",
            "en-US-EmmaMultilingualNeural", "en-US-AvaMultilingualNeural",
            "en-GB-RyanNeural"]
+
+    # Voice untuk engine "gemini" (dipakai HANYA kalau tts_engine: gemini
+    # di atas). Sengaja belum diisi per-bahasa spesifik karena daftar
+    # resmi 30+ nama voice Gemini TTS belum sempat diverifikasi satu-satu
+    # cocoknya utk Bahasa Indonesia vs English -- default di kode (Kore,
+    # Puck, Charon, Fenrir, Aoede) dipakai untuk KEDUA bahasa dulu. Kalau
+    # sudah dengar hasilnya dan mau kurangi/ganti daftarnya, tambahkan:
+    # gemini_voices:
+    #   id: ["Kore", "Puck"]
+    #   en: ["Charon", "Fenrir", "Aoede"]
     # Variasi rate/pitch KECIL, ACAK per-scene -- supaya suara tidak
     # terdengar 100% flat/seragam di seluruh durasi (ciri khas TTS yang
     # "kedengaran AI"). Rentang sengaja sempit supaya tetap terdengar
