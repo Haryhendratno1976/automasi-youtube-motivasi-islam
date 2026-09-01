@@ -61,7 +61,7 @@ class ScriptGenerator:
         # video, brand hashtag sekali seumur hidup) -- default ke model
         # berkuota longgar supaya tidak ikut menggerus jatah harian model
         # utama yang sengaja dihemat untuk narasi.
-        self.gemini_model_secondary = self.script_config.get("gemini_model_secondary", "gemini-2.5-flash-lite")
+        self.gemini_model_secondary = self.script_config.get("gemini_model_secondary", "gemini-3.5-flash-lite")
 
         # Nama niche buat ditampilkan di prompt -- dulu hardcoded "Life
         # Motivation niche", sekarang configurable lewat
