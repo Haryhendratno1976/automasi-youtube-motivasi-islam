@@ -77,7 +77,8 @@ def approve_review_item(review_id):
         uploader.upload_to_facebook_reels(item["video_path"], item["description"], item["language"])
 
         if not yt_id:
-            return False, "Upload gagal -- cek kredensial YouTube di halaman/perintah Status.", item
+            reason = getattr(uploader, "last_youtube_error", None) or "Penyebab tidak terdeteksi -- cek log Railway."
+            return False, f"Upload gagal -- {reason}", item
 
         item["status"] = "approved"
         item["youtube_id"] = yt_id
