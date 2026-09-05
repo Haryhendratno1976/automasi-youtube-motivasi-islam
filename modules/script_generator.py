@@ -98,11 +98,11 @@ class ScriptGenerator:
                 "GEMINI_API_KEY tidak diset/masih placeholder di environment. "
                 "Script akan pakai template fallback."
             )
-        elif not api_key.startswith("AIza") or len(api_key) < 30:
+        elif not (api_key.startswith("AIza") or api_key.startswith("AQ")) or len(api_key) < 20:
             logger.error(
                 f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
-                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
-                f"'AIza' dan sekitar 39 karakter. Kemungkinan ada whitespace tersembunyi "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini/Google Cloud biasanya diawali "
+                f"'AIza' atau 'AQ'. Kemungkinan ada whitespace tersembunyi "
                 f"saat copy-paste, key salah/tidak lengkap, atau key sudah di-revoke. "
                 f"Cek ulang GEMINI_API_KEY di Railway -> Variables. Script akan pakai "
                 f"template fallback sampai ini diperbaiki."
