@@ -13,6 +13,7 @@ import random
 import shutil
 import subprocess
 import wave
+import re
 import warnings
 import time
 from io import BytesIO
@@ -109,7 +110,7 @@ class VideoCreator:
         self.gemini_image_model = self.video_config.get("gemini_image_model", "gemini-3.1-flash-image")
         self._gemini_image_ready = False
         self._gemini_client = None
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
         if genai is None:
             logger.warning(
                 "Library 'google-genai' belum terinstall -- generate gambar AI "
@@ -119,6 +120,15 @@ class VideoCreator:
             logger.warning(
                 "GEMINI_API_KEY tidak diset -- generate gambar AI untuk visual "
                 "pengganti tidak akan tersedia (fallback ke warna solid)."
+            )
+        elif not api_key.startswith("AIza") or len(api_key) < 30:
+            logger.error(
+                f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
+                f"'AIza' dan sekitar 39 karakter. Kemungkinan ada whitespace tersembunyi "
+                f"saat copy-paste, key salah/tidak lengkap, atau key sudah di-revoke. "
+                f"Cek ulang GEMINI_API_KEY di Railway -> Variables. Gambar AI/filter "
+                f"visual/TTS Gemini tidak akan tersedia sampai ini diperbaiki."
             )
         else:
             try:
@@ -476,6 +486,21 @@ class VideoCreator:
             raise RuntimeError("Gemini client tidak siap (GEMINI_API_KEY tidak diset/gagal konfigurasi).")
 
         style_instruction = self._GEMINI_TTS_STYLE_BY_BEAT.get(story_beat, "Say in a natural, warm, conversational tone:")
+
+        # Instruksi tambahan soal pengucapan istilah Arab/Islami -- OPT-IN
+        # via config (aktif otomatis kalau islamic_content_guidelines aktif
+        # di script_generator, tapi creator.py tidak selalu tahu itu, jadi
+        # dibaca dari video_config sendiri). Ini SEBAGAI TAMBAHAN dari
+        # respelling di _apply_pronunciation_fixes() -- dua lapis mitigasi
+        # berbeda (instruksi ke model + respelling teks), bukan pengganti
+        # satu sama lain, karena keduanya sama-sama best-effort/tidak
+        # dijamin sempurna untuk model preview seperti ini.
+        if self.video_config.get("tts", {}).get("gemini_tts_arabic_pronunciation_hint", True):
+            style_instruction += (
+                " Pronounce any Arabic religious terms (such as 'Allah') with correct "
+                "Arabic phonetic emphasis, not an anglicized/flattened pronunciation."
+            )
+
         full_text = f"{style_instruction} {text}"
         model = self.video_config.get("gemini_tts_model", "gemini-2.5-flash-preview-tts")
 
@@ -515,6 +540,39 @@ class VideoCreator:
             wf.writeframes(pcm_data)
 
         return seg_path
+
+    def _apply_pronunciation_fixes(self, text, language):
+        """
+        Ganti kata-kata tertentu (istilah Arab/Islami yang sering salah
+        ucap oleh TTS umum, mis. "Allah") dengan ejaan alternatif yang
+        SECARA EMPIRIS terdengar lebih dekat ke pengucapan yang benar,
+        SEBELUM teks ini dikirim ke TTS. TIDAK memengaruhi subtitle yang
+        tampil di layar (subtitle tetap pakai ejaan asli/benar) -- cuma
+        versi yang dikirim ke mesin suara yang diubah.
+
+        KENAPA CUMA respelling (bukan kontrol fonem presisi via SSML):
+        edge-tts sejak v5.0.0 MEMBLOKIR custom SSML sepenuhnya (Microsoft
+        sengaja menutup celah itu) -- jadi tidak ada cara mengontrol fonem
+        secara eksak lagi di edge-tts. Respelling adalah teknik paling
+        praktis yang tersisa: crude, tidak selalu sempurna, tapi tidak
+        butuh apa-apa selain ubah teks.
+
+        INI EKSPERIMENTAL & CONFIGURABLE -- daftar substitusi ada di
+        config.yaml (video_creator.tts.pronunciation_fixes.<lang>),
+        SILAKAN disesuaikan sendiri sambil dengar hasilnya. Kalau ejaan
+        pengganti tertentu ternyata malah lebih buruk, ubah/hapus dari
+        config -- tidak perlu ubah kode.
+        """
+        fixes = self.video_config.get("tts", {}).get("pronunciation_fixes", {}).get(language, {})
+        if not fixes:
+            return text
+        result = text
+        for original, replacement in fixes.items():
+            # \b (word boundary) supaya cuma kata UTUH yang diganti, bukan
+            # substring di dalam kata lain (mis. "Allah" tidak menimpa
+            # bagian dari kata lain yang kebetulan mengandung itu).
+            result = re.sub(rf"\b{re.escape(original)}\b", replacement, result, flags=re.IGNORECASE)
+        return result
 
     async def generate_voiceover(self, script_data, language="id"):
         """
@@ -603,11 +661,17 @@ class VideoCreator:
             text = text.replace("allah", "awlloh").replace("rasulullah", "rosululloh")
             # ==============================================================
             seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
+            
+            # Versi teks KHUSUS untuk dikirim ke TTS (subtitle di layar
+            # TETAP pakai `text` asli/ejaan benar -- lihat create_video(),
+            # raw_text di sana ambil dari scene["narration"] langsung,
+            # bukan dari variabel ini).
+            tts_text = self._apply_pronunciation_fixes(text, language)
 
             if tts_engine == "gemini":
                 try:
                     gemini_seg_path = await self._generate_scene_audio_gemini_tts(
-                        text, gemini_voice, story_beat=scene.get("story_beat")
+                        tts_text, gemini_voice, story_beat=scene.get("story_beat")
                     )
                     segment_paths.append(gemini_seg_path)
                     continue
@@ -634,7 +698,7 @@ class VideoCreator:
             for attempt_voice in [voice] + [v for v in candidates if v != voice]:
                 try:
                     communicate = edge_tts.Communicate(
-                        text, attempt_voice, rate=scene_rate, pitch=scene_pitch, volume="+0%"
+                        tts_text, attempt_voice, rate=scene_rate, pitch=scene_pitch, volume="+0%"
                     )
                     await communicate.save(str(seg_path))
                     if attempt_voice != voice:
