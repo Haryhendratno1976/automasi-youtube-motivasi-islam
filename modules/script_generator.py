@@ -7,6 +7,7 @@ dengan fallback template variatif kalau API gagal/tidak tersedia.
 """
 
 import os
+import time
 import json
 import logging
 import yaml
@@ -86,7 +87,7 @@ class ScriptGenerator:
 
         self._gemini_ready = False
         self._gemini_client = None
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
         if genai is None:
             logger.warning(
                 "Library 'google-genai' belum terinstall (tambahkan ke requirements.txt). "
@@ -96,6 +97,15 @@ class ScriptGenerator:
             logger.warning(
                 "GEMINI_API_KEY tidak diset/masih placeholder di environment. "
                 "Script akan pakai template fallback."
+            )
+        elif not api_key.startswith("AIza") or len(api_key) < 30:
+            logger.error(
+                f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
+                f"'AIza' dan sekitar 39 karakter. Kemungkinan ada whitespace tersembunyi "
+                f"saat copy-paste, key salah/tidak lengkap, atau key sudah di-revoke. "
+                f"Cek ulang GEMINI_API_KEY di Railway -> Variables. Script akan pakai "
+                f"template fallback sampai ini diperbaiki."
             )
         else:
             try:
@@ -223,6 +233,42 @@ class ScriptGenerator:
         self._save_recent_pattern(language, fallback.get("title", ""), fallback.get("hook", ""), hook_type=None)
         fallback["variant"] = variant
         return fallback
+
+    def _call_gemini_with_retry(self, model, contents, config=None, max_retries=2, base_delay=3):
+        """
+        Panggil Gemini API dengan retry OTOMATIS khusus untuk error yang
+        SIFATNYA SEMENTARA (503 UNAVAILABLE "model sedang high demand", dan
+        semacamnya) -- Google sendiri bilang error ini "usually temporary,
+        please try again later", jadi retry singkat jauh lebih tepat
+        daripada langsung menyerah ke fallback template di percobaan
+        pertama.
+
+        TIDAK retry untuk error yang JELAS permanen dalam sesi ini (401
+        auth invalid, 404 model tidak ada/deprecated, 429 quota harian
+        habis -- retry tidak akan menolong, cuma buang waktu) -- itu
+        langsung dilempar ke caller supaya fallback template terpicu
+        SEGERA tanpa delay percuma.
+        """
+        transient_indicators = ["503", "UNAVAILABLE", "high demand", "overloaded"]
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                if config is not None:
+                    return self._gemini_client.models.generate_content(model=model, contents=contents, config=config)
+                return self._gemini_client.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                last_error = e
+                error_str = str(e)
+                is_transient = any(ind in error_str for ind in transient_indicators)
+                if not is_transient or attempt == max_retries:
+                    raise
+                delay = base_delay * (attempt + 1)  # backoff bertahap: 3s, 6s, ...
+                logger.warning(
+                    f"Gemini API sementara tidak tersedia (percobaan {attempt+1}/{max_retries+1}), "
+                    f"retry dalam {delay}s... ({error_str[:100]})"
+                )
+                time.sleep(delay)
+        raise last_error
 
     def _generate_via_gemini(self, topic, language, recent_patterns=None, hook_type=None, variant="voice"):
         lang_name = "Bahasa Indonesia" if language == "id" else "English (Natural native style)"
@@ -461,7 +507,7 @@ channel uses, which YouTube's 2026 "visual uniqueness" filter penalizes.
         visual_prompt_example = (
             "English description for a BRIGHT scene with NO people -- e.g., "
             "mosque dome against a golden sunset, Arabic calligraphy art, "
-            "mountain sunrise, prayer beads on a wooden table"
+            "mountain sunrise, Islamic prayer beads (tasbih) on a wooden table"
             if self.avoid_human_figures else
             "English description for BRIGHT, well-lit stock footage background "
             "(e.g., sunny city street, warm golden-hour park, vivid morning workout)"
@@ -523,11 +569,7 @@ text before or after) with this exact structure:
                     automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
                 )
 
-            response = self._gemini_client.models.generate_content(
-                model=self.gemini_model_name,
-                contents=prompt,
-                config=config,
-            )
+            response = self._call_gemini_with_retry(self.gemini_model_name, prompt, config)
             text = (response.text or "").strip()
 
             # Jaga-jaga kalau tetap dibungkus ```json ... ``` walau sudah diminta tidak.
@@ -642,12 +684,13 @@ text before or after) with this exact structure:
                     f"video's topic. Respond with ONLY the hashtag itself, "
                     f"nothing else -- no explanation, no quotes."
                 )
-                response = self._gemini_client.models.generate_content(
-                    model=self.gemini_model_secondary,
-                    contents=gen_prompt,
-                    config=genai_types.GenerateContentConfig(
+                response = self._call_gemini_with_retry(
+                    self.gemini_model_secondary,
+                    gen_prompt,
+                    genai_types.GenerateContentConfig(
                         automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True)
                     ),
+                    max_retries=1,  # brand hashtag cuma sekali seumur hidup, tidak kritis -- retry lebih singkat
                 )
                 candidate = (response.text or "").strip().split()[0] if response.text else ""
                 candidate = candidate.strip('"\'')
@@ -740,11 +783,7 @@ explanation text before or after), with this exact structure:
                     automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
                 )
 
-            response = self._gemini_client.models.generate_content(
-                model=self.gemini_model_secondary,
-                contents=prompt,
-                config=config,
-            )
+            response = self._call_gemini_with_retry(self.gemini_model_secondary, prompt, config)
             text = (response.text or "").strip()
             if text.startswith("```"):
                 text = text.strip("`").strip()
@@ -829,7 +868,7 @@ explanation text before or after), with this exact structure:
                         ("hook", "Kesuksesan bukan milik orang pintar, tapi milik mereka yang tidak pernah berhenti.", "Cinematic bright sunlit close-up determined face"),
                         ("story", f"Bayangkan seseorang yang sudah mencoba berkali-kali soal {topic}, gagal, dicemooh, tapi tetap bangun tiap pagi untuk coba lagi.", "Cinematic vivid golden-hour person walking alone outdoors"),
                         ("emotion", "Di titik paling capek itulah, banyak yang memilih berhenti -- padahal itu justru saat paling dekat dengan titik balik.", "Cinematic soft blue twilight window reflective mood, still well-lit"),
-                        ("lesson", f"{topic} mengajarkan satu hal: bukan seberapa cepat kamu mulai, tapi seberapa lama kamu mampu bertahan di saat paling sulit.", "Cinematic bright sunrise breaking through clouds hopeful"),
+                        ("lesson", f"Perjalanan soal {topic} mengajarkan satu hal: bukan seberapa cepat kamu mulai, tapi seberapa lama kamu mampu bertahan di saat paling sulit.", "Cinematic bright sunrise breaking through clouds hopeful"),
                         ("punchline", "Jangan berhenti sekarang. Titik balikmu mungkin cuma satu langkah lagi.", "Cinematic bright daylight silhouette standing strong mountain peak"),
                     ],
                     "hashtags": ["#motivasi", "#disiplin", "#shorts"],
@@ -853,7 +892,7 @@ explanation text before or after), with this exact structure:
                         ("hook", "Bukan bakat, tapi konsistensi yang membawa mereka sampai puncak.", "Cinematic vivid city daylight determined walk"),
                         ("story", f"Kamu pernah lihat orang yang kelihatannya biasa saja, tapi soal {topic} dia konsisten tiap hari tanpa drama.", "Cinematic bright morning daily routine, natural light"),
                         ("emotion", "Sementara yang lain sibuk cari motivasi baru tiap minggu, dia cuma lakukan hal yang sama, berulang, tanpa banyak bicara.", "Cinematic bright quiet determination close-up"),
-                        ("lesson", f"{topic} bukan soal seberapa cepat kamu mulai, tapi seberapa lama kamu mampu bertahan konsisten.", "Cinematic sunlit steady footsteps path forward"),
+                        ("lesson", f"Ini bukan soal seberapa cepat kamu mulai soal {topic}, tapi seberapa lama kamu mampu bertahan konsisten.", "Cinematic sunlit steady footsteps path forward"),
                         ("punchline", "Motivasi itu cuma percikan. Konsistensi yang bakar apinya sampai selesai.", "Cinematic warm glowing fire silhouette, bright determined figure"),
                     ],
                     "hashtags": ["#konsisten", "#growth", "#shorts"],
@@ -867,7 +906,7 @@ explanation text before or after), with this exact structure:
                         ("hook", "Success doesn't belong to the smartest, it belongs to those who never quit.", "Cinematic bright sunlit close-up determined face"),
                         ("story", f"Picture someone who's tried and failed at {topic} over and over, mocked, but still gets up every single morning to try again.", "Cinematic vivid golden-hour person walking alone outdoors"),
                         ("emotion", "Right at that most exhausted point is exactly where most people choose to quit -- when they're actually closest to the turning point.", "Cinematic soft blue twilight window reflective mood, still well-lit"),
-                        ("lesson", f"{topic} teaches one thing: it's not about how fast you start, it's about how long you can hold on when it's hardest.", "Cinematic bright sunrise breaking through clouds hopeful"),
+                        ("lesson", f"This journey with {topic} teaches one thing: it's not about how fast you start, it's about how long you can hold on when it's hardest.", "Cinematic bright sunrise breaking through clouds hopeful"),
                         ("punchline", "Don't stop now. Your turning point might be just one step away.", "Cinematic bright daylight silhouette standing strong mountain peak"),
                     ],
                     "hashtags": ["#motivation", "#discipline", "#shorts"],
@@ -891,7 +930,7 @@ explanation text before or after), with this exact structure:
                         ("hook", "It's not talent, it's consistency that gets people to the top.", "Cinematic vivid city daylight determined walk"),
                         ("story", f"You've probably seen someone who looks completely ordinary, but shows up for {topic} every single day without any drama.", "Cinematic bright morning daily routine, natural light"),
                         ("emotion", "While everyone else is chasing a new burst of motivation every week, they just keep doing the same thing, quietly, over and over.", "Cinematic bright quiet determination close-up"),
-                        ("lesson", f"{topic} isn't about how fast you start, it's about how long you can hold on with consistency.", "Cinematic sunlit steady footsteps path forward"),
+                        ("lesson", f"It isn't about how fast you start with {topic}, it's about how long you can hold on with consistency.", "Cinematic sunlit steady footsteps path forward"),
                         ("punchline", "Motivation is just a spark. Consistency is what keeps the fire burning until it's done.", "Cinematic warm glowing fire silhouette, bright determined figure"),
                     ],
                     "hashtags": ["#consistency", "#growth", "#shorts"],
@@ -914,11 +953,11 @@ explanation text before or after), with this exact structure:
                     "scenes": [
                         ("hook", "Sabar bukan berarti diam menerima, tapi tetap tenang sambil terus berusaha.",
                          "Islamic geometric pattern close-up, warm gold tones" if no_figures else "Cinematic bright sunlit close-up determined face"),
-                        ("story", f"Ada masa ketika {topic} terasa berat, seakan semua usaha belum juga membuahkan hasil.",
+                        ("story", f"Ada masa ketika perjalanan soal {topic} terasa berat, seakan semua usaha belum juga membuahkan hasil.",
                          "Mountain sunrise, soft warm light, no people" if no_figures else "Cinematic vivid golden-hour person walking alone outdoors"),
                         ("emotion", "Di titik itu, hati mudah bertanya-tanya -- kenapa harus seberat ini?",
                          "Soft twilight window with warm lamp light, no people, reflective mood" if no_figures else "Cinematic soft blue twilight window reflective mood, still well-lit"),
-                        ("lesson", f"Tapi {topic} justru sering jadi jalan untuk belajar lebih tenang, lebih ikhlas, dan lebih percaya bahwa semua ada waktunya.",
+                        ("lesson", f"Tapi perjalanan itu justru sering jadi jalan untuk belajar lebih tenang, lebih ikhlas, dan lebih percaya bahwa semua ada waktunya.",
                          "Sunrise breaking through clouds over open field, no people" if no_figures else "Cinematic bright sunrise breaking through clouds hopeful"),
                         ("punchline", "Tenangkan hati. Yang berat hari ini, bisa jadi jalan menuju sesuatu yang lebih baik.",
                          "Mosque dome silhouette against golden sky, no people" if no_figures else "Cinematic bright daylight silhouette standing strong mountain peak"),
@@ -930,8 +969,8 @@ explanation text before or after), with this exact structure:
                     "hook": "Syukur bukan cuma saat semua berjalan lancar, tapi justru paling berarti saat sulit.",
                     "scenes": [
                         ("hook", "Syukur bukan cuma saat semua berjalan lancar, tapi justru paling berarti saat sulit.",
-                         "Warm golden light through window, prayer beads on table, no people" if no_figures else "Cinematic warm daylight person standing up slowly"),
-                        ("story", f"Kadang {topic} membuat kita lupa untuk melihat hal-hal kecil yang sebenarnya masih bisa disyukuri.",
+                         "Warm golden light through window, Islamic prayer beads (tasbih) on table, no people" if no_figures else "Cinematic warm daylight person standing up slowly"),
+                        ("story", f"Kadang perjalanan soal {topic} membuat kita lupa untuk melihat hal-hal kecil yang sebenarnya masih bisa disyukuri.",
                          "Cozy warm-lit room with open book, no people" if no_figures else "Cinematic warm lamp-lit room, cozy isolation mood, still bright"),
                         ("emotion", "Fokus yang terlalu besar pada kekurangan bisa membuat hati terasa berat dan hampa.",
                          "Softly lit hallway, warm tones, gentle empty mood, no people" if no_figures else "Cinematic softly lit hallway, warm tones, gentle isolation mood"),
@@ -949,10 +988,10 @@ explanation text before or after), with this exact structure:
                         ("hook", "Tawakal itu setelah ikhtiar maksimal, bukan pengganti usaha.",
                          "Islamic geometric pattern, warm morning light, no people" if no_figures else "Cinematic vivid city daylight determined walk"),
                         ("story", f"Banyak yang berhenti berusaha soal {topic} dan menyebutnya tawakal, padahal tawakal datang setelah usaha, bukan sebelum.",
-                         "Open book and prayer beads on wooden table, morning light, no people" if no_figures else "Cinematic bright morning daily routine, natural light"),
+                         "Open Quran-style book and Islamic prayer beads (tasbih) on wooden table, morning light, no people" if no_figures else "Cinematic bright morning daily routine, natural light"),
                         ("emotion", "Ada ketenangan berbeda ketika kita sudah berusaha sepenuh hati, lalu menyerahkan hasilnya.",
                          "Calm still lake at dawn, no people" if no_figures else "Cinematic bright quiet determination close-up"),
-                        ("lesson", f"{topic} mengajarkan bahwa hasil terbaik datang dari kombinasi usaha sungguh-sungguh dan hati yang pasrah.",
+                        ("lesson", f"Perjalanan soal {topic} mengajarkan bahwa hasil terbaik datang dari kombinasi usaha sungguh-sungguh dan hati yang pasrah.",
                          "Sunlit path through a garden, no people" if no_figures else "Cinematic sunlit steady footsteps path forward"),
                         ("punchline", "Usahakan yang terbaik, lalu tenangkan hati dengan tawakal.",
                          "Warm glowing lantern at dusk, no people" if no_figures else "Cinematic warm glowing fire silhouette, bright determined figure"),
@@ -984,11 +1023,11 @@ explanation text before or after), with this exact structure:
                     "scenes": [
                         ("hook", "Patience doesn't mean staying silent, it means staying calm while you keep trying.",
                          "Islamic geometric pattern close-up, warm gold tones" if no_figures else "Cinematic bright sunlit close-up determined face"),
-                        ("story", f"There are moments when {topic} feels heavy, like your effort hasn't paid off yet.",
+                        ("story", f"There are moments when the journey with {topic} feels heavy, like your effort hasn't paid off yet.",
                          "Mountain sunrise, soft warm light, no people" if no_figures else "Cinematic vivid golden-hour person walking alone outdoors"),
                         ("emotion", "In that moment, it's easy for your heart to ask -- why does it have to be this hard?",
                          "Soft twilight window with warm lamp light, no people, reflective mood" if no_figures else "Cinematic soft blue twilight window reflective mood, still well-lit"),
-                        ("lesson", f"But {topic} often becomes the path to learning real calm, real sincerity, and real trust that everything has its time.",
+                        ("lesson", f"But that journey often becomes the path to learning real calm, real sincerity, and real trust that everything has its time.",
                          "Sunrise breaking through clouds over open field, no people" if no_figures else "Cinematic bright sunrise breaking through clouds hopeful"),
                         ("punchline", "Steady your heart. What feels heavy today may be the path to something better.",
                          "Mosque dome silhouette against golden sky, no people" if no_figures else "Cinematic bright daylight silhouette standing strong mountain peak"),
@@ -1000,8 +1039,8 @@ explanation text before or after), with this exact structure:
                     "hook": "Gratitude isn't just for when things go well -- it matters most when they don't.",
                     "scenes": [
                         ("hook", "Gratitude isn't just for when things go well -- it matters most when they don't.",
-                         "Warm golden light through window, prayer beads on table, no people" if no_figures else "Cinematic warm daylight person standing up slowly"),
-                        ("story", f"Sometimes {topic} makes us forget the small things we could still be thankful for.",
+                         "Warm golden light through window, Islamic prayer beads (tasbih) on table, no people" if no_figures else "Cinematic warm daylight person standing up slowly"),
+                        ("story", f"Sometimes the journey with {topic} makes us forget the small things we could still be thankful for.",
                          "Cozy warm-lit room with open book, no people" if no_figures else "Cinematic warm lamp-lit room, cozy isolation mood, still bright"),
                         ("emotion", "Focusing too much on what's missing can leave the heart feeling heavy and empty.",
                          "Softly lit hallway, warm tones, gentle empty mood, no people" if no_figures else "Cinematic softly lit hallway, warm tones, gentle isolation mood"),
@@ -1019,10 +1058,10 @@ explanation text before or after), with this exact structure:
                         ("hook", "Trusting God comes after your best effort, not instead of it.",
                          "Islamic geometric pattern, warm morning light, no people" if no_figures else "Cinematic vivid city daylight determined walk"),
                         ("story", f"Many people stop trying on {topic} and call it trust, when real trust in God comes after the effort, not before it.",
-                         "Open book and prayer beads on wooden table, morning light, no people" if no_figures else "Cinematic bright morning daily routine, natural light"),
+                         "Open Quran-style book and Islamic prayer beads (tasbih) on wooden table, morning light, no people" if no_figures else "Cinematic bright morning daily routine, natural light"),
                         ("emotion", "There's a different kind of calm when you've truly given your best, then let go of the outcome.",
                          "Calm still lake at dawn, no people" if no_figures else "Cinematic bright quiet determination close-up"),
-                        ("lesson", f"{topic} teaches that the best results come from real effort paired with a heart at peace.",
+                        ("lesson", f"This journey with {topic} teaches that the best results come from real effort paired with a heart at peace.",
                          "Sunlit path through a garden, no people" if no_figures else "Cinematic sunlit steady footsteps path forward"),
                         ("punchline", "Do your best, then let your heart rest in trust.",
                          "Warm glowing lantern at dusk, no people" if no_figures else "Cinematic warm glowing fire silhouette, bright determined figure"),
