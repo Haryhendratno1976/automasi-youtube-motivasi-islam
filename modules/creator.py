@@ -121,11 +121,11 @@ class VideoCreator:
                 "GEMINI_API_KEY tidak diset -- generate gambar AI untuk visual "
                 "pengganti tidak akan tersedia (fallback ke warna solid)."
             )
-        elif not api_key.startswith("AIza") or len(api_key) < 30:
+        elif not (api_key.startswith("AIza") or api_key.startswith("AQ")) or len(api_key) < 20:
             logger.error(
                 f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
-                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
-                f"'AIza' dan sekitar 39 karakter. Kemungkinan ada whitespace tersembunyi "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini/Google Cloud biasanya diawali "
+                f"'AIza' atau 'AQ'. Kemungkinan ada whitespace tersembunyi "
                 f"saat copy-paste, key salah/tidak lengkap, atau key sudah di-revoke. "
                 f"Cek ulang GEMINI_API_KEY di Railway -> Variables. Gambar AI/filter "
                 f"visual/TTS Gemini tidak akan tersedia sampai ini diperbaiki."
@@ -181,19 +181,13 @@ class VideoCreator:
 
         FAIL-OPEN BY DESAIN: kalau client Gemini tidak siap atau request
         gagal (network/quota/dsb), gambar dianggap LOLOS (return False),
-        bukan ditolak. Ini filter preferensi konten/estetika, BUKAN filter
-        keamanan seperti _find_unsafe_term() di script_generator.py --
-        kalau fail-closed, satu error API bisa bikin SEMUA scene gagal
-        dapat visual dan video jatuh ke background warna solid terus-
-        menerus. Trade-off yang diambil: sesekali lolos gambar yang
-        harusnya ketolak (kalau API lagi error) dianggap lebih baik
-        daripada pipeline berhenti total.
+        bukan ditolak.
         """
         if not self._gemini_image_ready:
             return False
         try:
             response = self._gemini_client.models.generate_content(
-                model=self.video_config.get("vision_check_model", "gemini-3.5-flash-lite"),  # model teks+vision ringan utk klasifikasi YES/NO -- BUKAN model image-gen (gemini_image_model). Default flash-lite krn kuota gratis jauh lebih longgar & tugasnya sederhana (klasifikasi, bukan generate konten).
+                model=self.video_config.get("vision_check_model", "gemini-3.5-flash-lite"),
                 contents=[
                     genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     self._visual_filter_question(),
@@ -209,7 +203,7 @@ class VideoCreator:
             return False
 
     def _image_path_violates_visual_filter(self, image_path):
-        """Wrapper _image_bytes_violates_visual_filter() untuk file gambar di disk -- resize dulu ke thumbnail kecil supaya request Gemini cepat & hemat kuota."""
+        """Wrapper _image_bytes_violates_visual_filter() untuk file gambar di disk."""
         try:
             with Image.open(image_path) as img:
                 thumb = img.convert("RGB")
@@ -222,7 +216,7 @@ class VideoCreator:
             return False
 
     def _thumbnail_url_violates_visual_filter(self, thumbnail_url):
-        """Wrapper _image_bytes_violates_visual_filter() untuk thumbnail Pexels video (dicek dari URL preview JPEG-nya, TANPA download video penuh dulu -- hemat bandwidth kalau nanti ternyata ditolak filter)."""
+        """Wrapper _image_bytes_violates_visual_filter() untuk thumbnail Pexels video."""
         try:
             r = requests.get(thumbnail_url, timeout=10)
             r.raise_for_status()
@@ -232,20 +226,7 @@ class VideoCreator:
             return False
 
     def download_stock_photo(self, visual_prompt):
-        """
-        Cari FOTO (bukan video) dari Pexels Photos API, orientasi portrait,
-        kualitas tinggi. Jadi prioritas utama background sekarang -- alasan:
-        file foto jauh lebih kecil dari video (~ratusan KB vs beberapa MB),
-        risiko korup/kepotong saat download nyaris nol, dan foto stock
-        Pexels umumnya jauh lebih terang/tajam daripada klip video murahan
-        yang sering dark/moody.
-
-        PENTING (kebijakan YouTube 2026): tetap dicari pakai `visual_prompt`
-        SPESIFIK per-scene (bukan kata kunci generik "nature/pemandangan"
-        lepas dari isi cerita) -- kebijakan "inauthentic content" YouTube
-        eksplisit menyasar "slideshows with no narrative". Foto harus tetap
-        relevan sama narasi, cuma sumbernya foto bukan video.
-        """
+        """Cari FOTO dari Pexels Photos API, orientasi portrait."""
         api_key = os.environ.get("PEXELS_API_KEY")
         if not api_key:
             return None
@@ -266,11 +247,6 @@ class VideoCreator:
                 return None
 
             avoid_filter = self._visual_filter_active()
-            # Kalau filter aktif, coba BEBERAPA kandidat (bukan cuma 1 acak)
-            # -- supaya kalau kandidat pertama ketolak filter, masih ada
-            # kandidat lain dari hasil pencarian yang sama untuk dicoba
-            # sebelum benar-benar dianggap gagal dan jatuh ke fallback
-            # berikutnya (video Pexels / gambar AI / warna solid).
             candidates = list(photos)
             random.shuffle(candidates)
             max_candidates = self.video_config.get("visual_filter_max_candidates", 2) if avoid_filter else 1
@@ -299,7 +275,6 @@ class VideoCreator:
                     img_path.unlink(missing_ok=True)
                     continue
 
-                # Validasi foto benar-benar bisa dibuka (bukan file korup/setengah)
                 try:
                     with Image.open(img_path) as test_img:
                         test_img.verify()
@@ -325,11 +300,7 @@ class VideoCreator:
             return None
 
     def _apply_ken_burns(self, image_clip, duration, zoom_end=1.12):
-        """
-        Efek zoom perlahan (Ken Burns) supaya gambar statis terasa hidup,
-        bukan diam kaku sepanjang durasi scene -- sekaligus nambah polish
-        produksi ("sedikit efek dalam setiap scene" sesuai permintaan).
-        """
+        """Efek zoom perlahan (Ken Burns)."""
         try:
             return image_clip.resized(lambda t: 1.0 + (zoom_end - 1.0) * (t / max(duration, 0.01)))
         except Exception as e:
@@ -337,17 +308,7 @@ class VideoCreator:
             return image_clip
 
     def generate_scene_image(self, visual_prompt, language="id"):
-        """
-        Generate 1 gambar AI (Gemini image model) sesuai visual_prompt scene.
-        Dipakai sebagai visual pengganti kalau download stock footage Pexels
-        gagal/tidak tersedia -- alternatif yang jauh lebih baik daripada
-        jatuh ke background warna solid polos.
-
-        PENTING: kalau gagal di titik manapun, return None dan cuma warning
-        -- pipeline video HARUS tetap lanjut (fallback warna solid tetap
-        jadi jaring pengaman terakhir), jangan sampai fitur ini bikin
-        seluruh video gagal dibuat.
-        """
+        """Generate 1 gambar AI (Gemini image model) sesuai visual_prompt scene."""
         if not self._gemini_image_ready:
             logger.warning(
                 "generate_scene_image() dipanggil tapi Gemini image client belum siap "
@@ -355,10 +316,6 @@ class VideoCreator:
             )
             return None
 
-        # Kalau sebelumnya di run yang sama sudah ketahuan kuota image-gen
-        # HABIS TOTAL (limit: 0, bukan rate-limit sementara), jangan buang
-        # waktu coba lagi untuk scene berikutnya -- pasti gagal lagi, cuma
-        # nambah delay render tanpa hasil.
         if getattr(self, "_gemini_image_quota_exhausted", False):
             logger.info("Skip percobaan gambar AI -- kuota Gemini image sudah diketahui habis di run ini.")
             return None
@@ -400,10 +357,6 @@ class VideoCreator:
                     img_path = self.ai_images_dir / f"scene_{random.randint(1000, 9999)}.jpg"
                     img.save(img_path, quality=90)
 
-                    # Instruksi prompt di atas tidak selalu 100% dipatuhi model
-                    # image-gen -- cek ulang HASIL gambarnya secara visual
-                    # sebagai lapis kedua, sama seperti dua sumber visual
-                    # lainnya (Pexels photo/video).
                     if self._visual_filter_active() and self._image_path_violates_visual_filter(img_path):
                         logger.info(f"Gambar AI {img_path} melanggar filter visual -- ditolak, fallback ke Pexels.")
                         img_path.unlink(missing_ok=True)
@@ -417,33 +370,25 @@ class VideoCreator:
 
         except Exception as e:
             error_str = str(e)
-            # "limit: 0" = kuota API key ini untuk model image-gen memang
-            # nol (biasanya karena masih free tier, model image butuh
-            # billing aktif) -- ini BUKAN rate-limit sementara yang pulih
-            # sendiri, jadi tandai supaya scene berikutnya di run yang sama
-            # tidak buang waktu coba lagi (pasti gagal sama).
             if "limit: 0" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                 self._gemini_image_quota_exhausted = True
                 logger.warning(
                     f"Gagal generate gambar AI ({e}). Kuota image-gen tampaknya habis/tidak "
                     f"tersedia di tier API key ini -- skip percobaan gambar AI untuk sisa scene "
-                    f"di video ini, fallback ke Pexels/warna solid. Cek billing di ai.google.dev "
-                    f"kalau mau fitur ini aktif."
+                    f"di video ini, fallback ke Pexels/warna solid."
                 )
             else:
                 logger.warning(f"Gagal generate gambar AI untuk scene ({e}), lanjut ke fallback warna solid.")
             return None
 
     def _fit_image_to_canvas(self, img, target_w, target_h):
-        """Resize+center-crop gambar supaya PAS mengisi kanvas target tanpa distorsi."""
+        """Resize+center-crop gambar supaya PAS mengisi kanvas target."""
         src_ratio = img.width / img.height
         target_ratio = target_w / target_h
         if src_ratio > target_ratio:
-            # gambar lebih lebar dari target -> resize berdasar tinggi, crop kiri-kanan
             new_h = target_h
             new_w = int(new_h * src_ratio)
         else:
-            # gambar lebih tinggi dari target -> resize berdasar lebar, crop atas-bawah
             new_w = target_w
             new_h = int(new_w / src_ratio)
         img = img.resize((new_w, new_h))
@@ -451,12 +396,6 @@ class VideoCreator:
         top = (new_h - target_h) // 2
         return img.crop((left, top, left + target_w, top + target_h))
 
-    # Instruksi gaya bicara per BEAT cerita (hook/story/emotion/lesson/
-    # punchline) -- Gemini TTS native dikontrol via instruksi bahasa alami
-    # yang disisipkan di depan teks (bukan cuma rate/pitch numerik seperti
-    # edge-tts), jadi bisa benar-benar mengubah GAYA penyampaian per scene
-    # -- ini yang bikin hasilnya berpotensi jauh lebih ekspresif/manusiawi
-    # dibanding edge-tts yang nadanya rata di seluruh video.
     _GEMINI_TTS_STYLE_BY_BEAT = {
         "hook": "Say in an attention-grabbing, slightly urgent tone:",
         "story": "Say in a warm, storytelling tone, like sharing a personal memory:",
@@ -466,35 +405,12 @@ class VideoCreator:
     }
 
     async def _generate_scene_audio_gemini_tts(self, text, voice, story_beat=None):
-        """
-        Generate audio narasi 1 scene lewat Gemini TTS NATIVE (BUKAN
-        edge-tts) -- model gemini-2.5-flash-preview-tts (configurable),
-        dikontrol via instruksi gaya bicara bahasa alami per BEAT cerita
-        (lihat _GEMINI_TTS_STYLE_BY_BEAT).
-
-        Gemini TTS API masih berstatus PREVIEW (per Agustus 2026) -- rate
-        limit belum terkonfirmasi longgar, jadi fungsi ini SENGAJA
-        melempar exception ke atas kalau gagal (bukan fail-open di sini),
-        supaya caller (generate_voiceover) bisa fallback ke edge-tts per
-        scene. Ini beda dari filosofi fail-open di tempat lain (mis. filter
-        visual) -- di sini kegagalan HARUS terdeteksi supaya fallback-nya
-        benar-benar jalan, bukan diam-diam menghasilkan audio kosong.
-
-        Return: Path file .wav hasil generate.
-        """
+        """Generate audio narasi 1 scene lewat Gemini TTS NATIVE."""
         if not self._gemini_image_ready:
             raise RuntimeError("Gemini client tidak siap (GEMINI_API_KEY tidak diset/gagal konfigurasi).")
 
         style_instruction = self._GEMINI_TTS_STYLE_BY_BEAT.get(story_beat, "Say in a natural, warm, conversational tone:")
 
-        # Instruksi tambahan soal pengucapan istilah Arab/Islami -- OPT-IN
-        # via config (aktif otomatis kalau islamic_content_guidelines aktif
-        # di script_generator, tapi creator.py tidak selalu tahu itu, jadi
-        # dibaca dari video_config sendiri). Ini SEBAGAI TAMBAHAN dari
-        # respelling di _apply_pronunciation_fixes() -- dua lapis mitigasi
-        # berbeda (instruksi ke model + respelling teks), bukan pengganti
-        # satu sama lain, karena keduanya sama-sama best-effort/tidak
-        # dijamin sempurna untuk model preview seperti ini.
         if self.video_config.get("tts", {}).get("gemini_tts_arabic_pronunciation_hint", True):
             style_instruction += (
                 " Pronounce any Arabic religious terms (such as 'Allah') with correct "
@@ -519,10 +435,6 @@ class VideoCreator:
                 ),
             )
 
-        # Panggilan Gemini TTS ini SINKRON (blocking), padahal fungsi ini
-        # async -- jalankan di thread terpisah (asyncio.to_thread) supaya
-        # tidak memblokir event loop bot Telegram/scheduler yang jalan
-        # bersamaan di proses yang sama.
         response = await asyncio.to_thread(_call_gemini_tts)
 
         pcm_data = response.candidates[0].content.parts[0].inline_data.data
@@ -530,74 +442,29 @@ class VideoCreator:
             raise RuntimeError("Respons Gemini TTS tidak mengandung data audio.")
 
         seg_path = self.temp_dir / f"voiceover_gemini_{random.randint(10000,99999)}.wav"
-        # Spesifikasi output Gemini TTS: PCM mentah 24kHz, 16-bit, mono --
-        # perlu dibungkus header WAV manual (modul 'wave' bawaan Python)
-        # supaya bisa dibaca AudioFileClip/ffmpeg seperti file audio biasa.
         with wave.open(str(seg_path), "wb") as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit = 2 byte
+            wf.setsampwidth(2)
             wf.setframerate(24000)
             wf.writeframes(pcm_data)
 
         return seg_path
 
     def _apply_pronunciation_fixes(self, text, language):
-        """
-        Ganti kata-kata tertentu (istilah Arab/Islami yang sering salah
-        ucap oleh TTS umum, mis. "Allah") dengan ejaan alternatif yang
-        SECARA EMPIRIS terdengar lebih dekat ke pengucapan yang benar,
-        SEBELUM teks ini dikirim ke TTS. TIDAK memengaruhi subtitle yang
-        tampil di layar (subtitle tetap pakai ejaan asli/benar) -- cuma
-        versi yang dikirim ke mesin suara yang diubah.
-
-        KENAPA CUMA respelling (bukan kontrol fonem presisi via SSML):
-        edge-tts sejak v5.0.0 MEMBLOKIR custom SSML sepenuhnya (Microsoft
-        sengaja menutup celah itu) -- jadi tidak ada cara mengontrol fonem
-        secara eksak lagi di edge-tts. Respelling adalah teknik paling
-        praktis yang tersisa: crude, tidak selalu sempurna, tapi tidak
-        butuh apa-apa selain ubah teks.
-
-        INI EKSPERIMENTAL & CONFIGURABLE -- daftar substitusi ada di
-        config.yaml (video_creator.tts.pronunciation_fixes.<lang>),
-        SILAKAN disesuaikan sendiri sambil dengar hasilnya. Kalau ejaan
-        pengganti tertentu ternyata malah lebih buruk, ubah/hapus dari
-        config -- tidak perlu ubah kode.
-        """
+        """Ganti kata-kata tertentu dengan ejaan alternatif sebelum dikirim ke TTS."""
         fixes = self.video_config.get("tts", {}).get("pronunciation_fixes", {}).get(language, {})
         if not fixes:
             return text
         result = text
         for original, replacement in fixes.items():
-            # \b (word boundary) supaya cuma kata UTUH yang diganti, bukan
-            # substring di dalam kata lain (mis. "Allah" tidak menimpa
-            # bagian dari kata lain yang kebetulan mengandung itu).
             result = re.sub(rf"\b{re.escape(original)}\b", replacement, result, flags=re.IGNORECASE)
         return result
 
     async def generate_voiceover(self, script_data, language="id"):
-        """
-        Menghasilkan voiceover PER SCENE (bukan 1 file gabungan untuk semua
-        narasi). Ini penting: dengan file terpisah per scene, durasi bicara
-        ASLI tiap scene bisa DIUKUR langsung dari file audionya di
-        create_video() -- bukan cuma tebakan/estimasi AI (duration_estimate)
-        yang sering meleset dan bikin subtitle/visual scene ganti terlalu
-        cepat/lambat dibanding suara yang sedang diucapkan.
-
-        Suara narator dipilih ACAK dari daftar per bahasa (config.yaml
-        tts.voices.<lang> bisa berupa list) -- tapi SATU suara yang sama
-        dipakai untuk SEMUA scene dalam 1 video (dipilih sekali di awal),
-        supaya tidak ganti-ganti narator di tengah video yang akan
-        terdengar aneh.
-
-        Return: list path .mp3, urutannya SAMA dengan script_data['scenes'].
-        """
+        """Menghasilkan voiceover PER SCENE."""
         voices_config = self.video_config.get("tts", {}).get("voices", {})
         default_voices = {
             "id": ["id-ID-ArdiNeural", "id-ID-GadisNeural"],
-            # Riset komunitas edge-tts (github.com/rany2/edge-tts diskusi #340)
-            # konsisten sebut voice multilingual generasi baru & GB-Ryan
-            # sebagai yang PALING natural/tidak robotic di antara semua
-            # voice edge-tts -- ditambahkan sebagai opsi rotasi.
             "en": ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
                    "en-US-RogerNeural", "en-US-JennyNeural", "en-US-AriaNeural",
                    "en-US-AndrewNeural", "en-US-EmmaNeural",
@@ -606,7 +473,7 @@ class VideoCreator:
         }
         voice_list = voices_config.get(language)
         if isinstance(voice_list, str):
-            voice_list = [voice_list]  # tetap dukung format lama (1 string) demi kompatibilitas
+            voice_list = [voice_list]
         if not voice_list:
             voice_list = default_voices.get(language, default_voices["id"])
 
@@ -614,21 +481,13 @@ class VideoCreator:
         random.shuffle(candidates)
         voice = candidates[0]
 
-        # Variasi rate/pitch KECIL per-scene -- edge-tts (seperti TTS lain)
-        # terdengar "AI banget" salah satunya karena ritme & pitch-nya
-        # PERSIS SAMA rata di seluruh durasi bicara, sesuatu yang tidak
-        # pernah terjadi di suara manusia asli. Variasi acak kecil ini
-        # (bukan konstan) meniru variasi alami tanpa terdengar aneh/lucu --
-        # rentang sengaja dibuat SEMPIT supaya tetap terdengar seperti 1
-        # narator yang sama, bukan berubah-ubah drastis.
         tts_config = self.video_config.get("tts", {})
         base_rate_str = tts_config.get("rate", "+0%")
         base_pitch_str = tts_config.get("pitch", "+0Hz")
-        rate_jitter_pct = tts_config.get("rate_jitter_percent", 4)   # +/- 4%
-        pitch_jitter_hz = tts_config.get("pitch_jitter_hz", 3)       # +/- 3Hz
+        rate_jitter_pct = tts_config.get("rate_jitter_percent", 4)
+        pitch_jitter_hz = tts_config.get("pitch_jitter_hz", 3)
 
         def _parse_numeric(value_str, suffix):
-            """Parse string seperti '+5%' atau '-3Hz' jadi float. Fail-safe: kalau format tidak dikenali, anggap 0."""
             try:
                 return float(value_str.replace(suffix, "").replace("+", ""))
             except (ValueError, AttributeError):
@@ -641,10 +500,6 @@ class VideoCreator:
         tts_engine = self.video_config.get("tts_engine", "edge_tts")
         logger.info(f"Menghasilkan voiceover ({language.upper()}) per-scene ({len(scenes)} segmen) -- engine: {tts_engine}, suara edge-tts cadangan: {voice}")
 
-        # Voice Gemini TTS -- dipilih SEKALI juga (konsisten 1 narator per
-        # video, sama seperti voice edge-tts di atas). Daftar voice resmi
-        # Gemini TTS ada 30+ nama (mis. "Kore", "Puck", "Charon", dst) --
-        # configurable, dengan default yang cukup netral/aman.
         gemini_voices_config = self.video_config.get("tts", {}).get("gemini_voices", {})
         gemini_voice_list = gemini_voices_config.get(language) or ["Kore", "Puck", "Charon", "Fenrir", "Aoede"]
         gemini_voice = random.choice(gemini_voice_list)
@@ -654,18 +509,11 @@ class VideoCreator:
             text = scene.get("narration", "").strip()
             if not text:
                 continue
-            # ==============================================================
-            # TAMBAHKAN KODE PENYESUAIAN PELAFALAN DI SINI
-            # ==============================================================
+            
             text = text.replace("Allah", "Awlloh").replace("Rasulullah", "Rosululloh")
             text = text.replace("allah", "awlloh").replace("rasulullah", "rosululloh")
-            # ==============================================================
-            seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
             
-            # Versi teks KHUSUS untuk dikirim ke TTS (subtitle di layar
-            # TETAP pakai `text` asli/ejaan benar -- lihat create_video(),
-            # raw_text di sana ambil dari scene["narration"] langsung,
-            # bukan dari variabel ini).
+            seg_path = self.temp_dir / f"voiceover_{language}_seg{i}.mp3"
             tts_text = self._apply_pronunciation_fixes(text, language)
 
             if tts_engine == "gemini":
@@ -676,24 +524,13 @@ class VideoCreator:
                     segment_paths.append(gemini_seg_path)
                     continue
                 except Exception as e:
-                    # Fail-open KHUSUS DI SINI (beda dari exception di
-                    # dalam _generate_scene_audio_gemini_tts sendiri yang
-                    # sengaja tidak fail-open) -- kalau Gemini TTS gagal
-                    # utk scene ini (kuota preview habis, dsb), turun ke
-                    # edge-tts utk scene ini SAJA, video tetap jalan.
                     logger.warning(f"Scene {i}: Gemini TTS gagal ({e}), fallback ke edge-tts untuk scene ini.")
 
-            # Hitung rate/pitch acak KECIL untuk scene ini saja (beda tiap
-            # scene, tapi masih di sekitar base_rate/base_pitch dari config).
             scene_rate_num = base_rate_num + random.uniform(-rate_jitter_pct, rate_jitter_pct)
             scene_pitch_num = base_pitch_num + random.uniform(-pitch_jitter_hz, pitch_jitter_hz)
             scene_rate = f"{'+' if scene_rate_num >= 0 else ''}{scene_rate_num:.0f}%"
             scene_pitch = f"{'+' if scene_pitch_num >= 0 else ''}{scene_pitch_num:.0f}Hz"
 
-            # Kalau suara yang dipilih ternyata invalid/gagal (nama voice
-            # salah, dsb), coba suara lain dari daftar sebelum menyerah --
-            # tapi TETAP suara yang sama dipakai konsisten untuk sisa scene
-            # setelah salah satu berhasil (di-set ulang ke `voice`).
             last_error = None
             for attempt_voice in [voice] + [v for v in candidates if v != voice]:
                 try:
@@ -717,20 +554,7 @@ class VideoCreator:
         return segment_paths
 
     def _is_footage_playable(self, clip):
-        """
-        Validasi EAGER apakah file footage benar-benar bisa dibaca sampai
-        akhir durasinya. PENTING: VideoFileClip() dan get_frame() TIDAK
-        melempar exception untuk file korup/terpotong -- MoviePy cuma
-        mengeluarkan warning lalu diam-diam mengulang frame valid terakhir.
-        Ini terbukti lewat test: file yang cuma 60% terunduh tetap
-        dilaporkan durasi penuh & frame awal terbaca normal, padahal
-        bagian belakangnya sudah rusak total.
-
-        Makanya divalidasi manual di sini: coba baca frame DEKAT AKHIR
-        durasi yang diklaim (karena truncation/korupsi selalu kena bagian
-        akhir file duluan), lalu tangkap warning MoviePy sendiri sebagai
-        sinyal bahwa file ini sebenarnya tidak playable penuh.
-        """
+        """Validasi apakah file footage benar-benar bisa dibaca."""
         try:
             test_t = max(0, clip.duration - 0.3)
             with warnings.catch_warnings(record=True) as caught:
@@ -750,27 +574,16 @@ class VideoCreator:
         if not api_key:
             logger.warning(
                 "PEXELS_API_KEY tidak terbaca dari environment. "
-                "Video akan selalu fallback ke background warna polos (ColorClip), "
-                "bukan footage asli. Set env var PEXELS_API_KEY untuk mengaktifkan stock footage."
+                "Video akan selalu fallback ke background warna polos (ColorClip)."
             )
             return None
 
         headers = {"Authorization": api_key.strip()}
-        
-        # Ambil halaman acak agar stok video tidak sama terus
         random_page = random.randint(1, 8)
-        
-        # Bersihkan kata kunci agar Pexels mudah menemukan video
         clean_prompt = visual_prompt.replace("'", "").replace('"', "")
         if self._avoid_human_figures_active():
-            # Fallback term netral tanpa figur manusia -- "motivation" di
-            # Pexels didominasi video orang, jadi diganti.
             fallback_terms = ["nature landscape", "geometric pattern", "calligraphy art"]
         else:
-            # "dark aesthetic" DIHAPUS -- bertentangan dengan prinsip
-            # "hindari visual gelap/pitch-black" yang diterapkan di tempat
-            # lain (brightness correction, prompt Gemini eksplisit minta
-            # visual terang). Diganti "sunrise" yang tetap moody tapi terang.
             fallback_terms = ["motivation", "nature", "sunrise"]
         prompts = [clean_prompt] + fallback_terms
 
@@ -799,11 +612,6 @@ class VideoCreator:
                             if not candidate_mp4_files:
                                 continue
 
-                            # Cek thumbnail preview-nya DULU (field 'image' di
-                            # respons Pexels) sebelum download video penuh --
-                            # jauh lebih hemat bandwidth/waktu kalau ternyata
-                            # ditolak filter, daripada download video utuh baru
-                            # ketahuan.
                             thumbnail_url = video_choice.get('image')
                             if avoid_filter and thumbnail_url and self._thumbnail_url_violates_visual_filter(thumbnail_url):
                                 logger.info(f"Video Pexels (thumbnail: {thumbnail_url}) melanggar filter visual -- ditolak, coba kandidat lain.")
@@ -817,12 +625,6 @@ class VideoCreator:
                                 logger.warning(f"Semua kandidat video Pexels untuk '{p}' ditolak filter visual/tidak ada mp4, coba prompt lain.")
                             continue
 
-                        # PENTING: pilih file dengan RESOLUSI PALING KECIL yang
-                        # masih layak (>=480px lebar), BUKAN yang pertama
-                        # ditemukan. Pexels sering taruh varian HD/4K duluan --
-                        # file besar = lebih lama diunduh = lebih rentan
-                        # timeout/terpotong di tengah jalan (penyebab utama
-                        # video "layar hitam" sebelumnya).
                         candidates = [f for f in mp4_files if (f.get('width') or 0) >= 480]
                         if not candidates:
                             candidates = mp4_files
@@ -851,15 +653,7 @@ class VideoCreator:
         return None
 
     def _download_video_file(self, url, filepath, min_completeness=0.98, connect_timeout=10, read_timeout=30):
-        """
-        Download file video ke `filepath` dengan verifikasi kelengkapan.
-        Mengembalikan `filepath` kalau sukses & lengkap, atau None kalau
-        gagal/terpotong (file parsial otomatis dihapus supaya tidak
-        terpakai sebagai footage yang rusak -- ini akar penyebab
-        "layar hitam"/freeze di video sebelumnya: file separuh download
-        tetap dipakai karena requests tidak selalu melempar exception
-        saat koneksi putus di tengah stream).
-        """
+        """Download file video dengan verifikasi kelengkapan."""
         try:
             start_time = time.monotonic()
             r = requests.get(url, stream=True, timeout=(connect_timeout, read_timeout))
@@ -878,7 +672,7 @@ class VideoCreator:
             if expected_size and bytes_written < expected_size * min_completeness:
                 logger.warning(
                     f"Download footage terpotong: {bytes_written}/{expected_size} bytes "
-                    f"({bytes_written / expected_size:.0%}) dalam {elapsed:.1f}s. File dibuang, tidak dipakai."
+                    f"({bytes_written / expected_size:.0%}) dalam {elapsed:.1f}s. File dibuang."
                 )
                 filepath.unlink(missing_ok=True)
                 return None
@@ -900,13 +694,7 @@ class VideoCreator:
             return None
 
     def _cleanup_old_outputs(self, keep_days=3):
-        """
-        Hapus video output lama (>keep_days) dari assets/output. Video yang
-        berhasil ter-upload sudah aman di YouTube -- tidak perlu disimpan
-        selamanya di disk Railway yang kapasitasnya terbatas. Tanpa ini,
-        disk bisa penuh setelah beberapa hari (4 video/hari menumpuk terus)
-        dan menyebabkan ffmpeg gagal nulis file baru ("Broken pipe").
-        """
+        """Hapus video output lama (>keep_days) dari assets/output."""
         try:
             cutoff = datetime.now().timestamp() - (keep_days * 86400)
             removed = 0
@@ -921,7 +709,7 @@ class VideoCreator:
             logger.warning(f"Gagal cleanup video output lama: {e}")
 
     def _try_load_ai_image_clip(self, visual_prompt, language, scene_duration, downloaded_footage_paths):
-        """Coba generate & load gambar AI sebagai ImageClip. Return clip atau None kalau gagal di titik manapun."""
+        """Coba generate & load gambar AI sebagai ImageClip."""
         ai_image_path = self.generate_scene_image(visual_prompt, language)
         if not ai_image_path:
             return None
@@ -935,36 +723,24 @@ class VideoCreator:
             return None
 
     def _log_available_memory(self, context=""):
-        """
-        Log sisa RAM yang BENAR-BENAR tersedia untuk container ini (bukan
-        RAM host fisik). Di dalam Docker/Railway, /proc/meminfo sering
-        melaporkan total RAM MESIN HOST, bukan batas cgroup yang benar-benar
-        dialokasikan ke container -- itu sebabnya log sebelumnya pernah
-        salah bilang "160GB tersedia dari 330GB" padahal container aslinya
-        dibatasi jauh lebih kecil, dan tetap ke-OOM-kill. Sekarang baca
-        limit cgroup v2 (atau v1 sebagai fallback) supaya angkanya akurat.
-        """
+        """Log sisa RAM container."""
         try:
             limit_mb = None
             usage_mb = None
 
-            # cgroup v2 (Railway & Docker modern umumnya pakai ini)
             cgroup_v2_max = Path("/sys/fs/cgroup/memory.max")
             cgroup_v2_current = Path("/sys/fs/cgroup/memory.current")
             if cgroup_v2_max.exists():
                 raw = cgroup_v2_max.read_text().strip()
-                if raw != "max":  # "max" artinya tidak dibatasi eksplisit
+                if raw != "max":
                     limit_mb = int(raw) / (1024 * 1024)
                 if cgroup_v2_current.exists():
                     usage_mb = int(cgroup_v2_current.read_text().strip()) / (1024 * 1024)
             else:
-                # cgroup v1 fallback
                 cgroup_v1_limit = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
                 cgroup_v1_usage = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
                 if cgroup_v1_limit.exists():
                     raw_limit = int(cgroup_v1_limit.read_text().strip())
-                    # cgroup v1 tanpa limit eksplisit sering melaporkan angka
-                    # raksasa (mendekati int64 max) -- perlakukan sebagai "tidak dibatasi"
                     if raw_limit < (1 << 62):
                         limit_mb = raw_limit / (1024 * 1024)
                     if cgroup_v1_usage.exists():
@@ -980,14 +756,9 @@ class VideoCreator:
                 if available_mb < 200 or pct_free < 15:
                     logger.warning(
                         f"RAM container tersisa sangat rendah ({available_mb:.0f} MB / "
-                        f"{pct_free:.0f}%) -- risiko TINGGI proses ke-kill OOM killer di "
-                        f"langkah berikutnya. Kemungkinan besar perlu upgrade plan Railway "
-                        f"(RAM lebih besar), bukan cuma optimasi kode."
+                        f"{pct_free:.0f}%)."
                     )
             else:
-                # Tidak ketemu file cgroup (bukan Linux container standar) --
-                # fallback ke /proc/meminfo dengan CATATAN eksplisit bahwa
-                # angka ini bisa jadi RAM host, bukan batas container.
                 with open("/proc/meminfo") as f:
                     meminfo = {}
                     for line in f:
@@ -996,31 +767,19 @@ class VideoCreator:
                 available_mb = int(meminfo.get("MemAvailable", "0 kB").split()[0]) / 1024
                 total_mb = int(meminfo.get("MemTotal", "0 kB").split()[0]) / 1024
                 logger.info(
-                    f"Memori (fallback /proc/meminfo, TIDAK terverifikasi cgroup) {context}: "
-                    f"{available_mb:.0f} MB / {total_mb:.0f} MB -- ANGKA INI BISA MENYESATKAN "
-                    f"kalau berjalan di container (bisa jadi RAM host, bukan limit container)."
+                    f"Memori (fallback /proc/meminfo) {context}: "
+                    f"{available_mb:.0f} MB / {total_mb:.0f} MB."
                 )
         except Exception as e:
             logger.warning(f"Gagal membaca info memori ({e}).")
 
-    # Ekstensi audio yang dipindai di folder musik latar.
     _BACKGROUND_AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".ogg", ".flac")
-    # Batas atas durasi loop track musik latar -- video Shorts di pipeline
-    # ini ditarget 30-45 detik (lihat prompt di script_generator.py), jadi
-    # 3 menit sudah jauh lebih dari cukup sebagai jaring pengaman tanpa
-    # perlu tahu durasi total video di awal (durasi tiap scene baru
-    # diketahui satu-satu dari file voiceover asli, bukan estimasi).
     _MAX_BACKGROUND_AUDIO_DURATION = 180
 
     def _background_audio_dir(self):
         return self.assets_dir / "music"
 
     def _list_background_audio_files(self):
-        """Daftar file audio di assets/music/ (folder yang HARUS diisi manual
-        oleh user dengan track nasheed vokal-only yang lisensinya jelas untuk
-        pemakaian komersial -- lihat catatan lisensi di config.yaml.example.
-        Kalau folder kosong, musik latar otomatis dilewati (fail-open,
-        bukan error) -- video tetap dibuat tanpa musik latar."""
         music_dir = self._background_audio_dir()
         if not music_dir.exists():
             return []
@@ -1040,10 +799,6 @@ class VideoCreator:
             return []
 
     def _save_nasheed_track_history(self, filename):
-        """Catat track yang barusan dipakai supaya video BERIKUTNYA prioritas
-        pakai track LAIN dulu (rotasi) -- sama seperti pola diversity untuk
-        hook_pattern_history_*.json di script_generator.py, supaya channel
-        tidak kedengaran pakai track yang itu-itu saja terus-menerus."""
         history_file = Path("reports") / "nasheed_track_history.json"
         os.makedirs("reports", exist_ok=True)
         history = self._load_nasheed_track_history()
@@ -1056,10 +811,6 @@ class VideoCreator:
             logger.warning(f"Gagal simpan riwayat track nasheed: {e}")
 
     def _pick_background_audio_path(self):
-        """Pilih 1 file track dari assets/music/, PRIORITASKAN yang paling
-        jarang/lama tidak dipakai (rotasi), bukan random murni -- supaya
-        variasi musik latar antar video lebih merata kalau library-nya kecil
-        (mis. baru 8 track gratis dari Aswati)."""
         files = self._list_background_audio_files()
         if not files:
             return None
@@ -1073,42 +824,25 @@ class VideoCreator:
         return chosen
 
     def _get_background_audio_slice(self, bg_track_full, cursor, duration):
-        """Ambil potongan track musik latar dari posisi `cursor` sepanjang
-        `duration` detik -- karena tiap scene di-render TERPISAH lalu
-        di-concat via ffmpeg stream-copy, memotong berdasarkan cursor waktu
-        yang terus berjalan (bukan mulai dari 0 tiap scene) inilah yang
-        membuat musiknya terdengar MENYAMBUNG mulus antar-scene setelah
-        di-concat, alih-alih restart dari awal tiap ganti scene."""
         available = bg_track_full.duration
         start = min(cursor, max(0, available - 0.1))
         end = min(cursor + duration, available)
         if end <= start:
-            # Kehabisan durasi track (kasus ekstrem: video lebih panjang dari
-            # _MAX_BACKGROUND_AUDIO_DURATION) -- ambil potongan terakhir yang
-            # tersisa alih-alih error.
             start = max(0, available - duration)
             end = available
         return bg_track_full.subclipped(start, end)
 
     def _logo_position_xy(self, position, logo_w, logo_h, margin, canvas_w=1080, canvas_h=1920):
-        """Hitung koordinat pixel (x, y) pojok kanvas untuk logo watermark, berdasarkan nama posisi + margin dari tepi."""
         if position == "top-left":
             return (margin, margin)
         elif position == "top-right":
             return (canvas_w - logo_w - margin, margin)
         elif position == "bottom-left":
             return (margin, canvas_h - logo_h - margin)
-        else:  # "bottom-right", default
+        else:
             return (canvas_w - logo_w - margin, canvas_h - logo_h - margin)
 
     def _load_logo_watermark_clip(self):
-        """
-        Muat logo watermark SEKALI (dipakai ulang di semua scene, mirip pola
-        musik latar) -- OPT-IN via config.yaml: video_creator.logo_watermark.
-        Fail-open: kalau file tidak ada/gagal dimuat, video tetap dibuat
-        TANPA logo (bukan error), supaya fitur estetika ini tidak pernah
-        menggagalkan seluruh pipeline video.
-        """
         cfg = self.video_config.get("logo_watermark", {})
         if not cfg.get("enabled", False):
             return None
@@ -1116,8 +850,7 @@ class VideoCreator:
         logo_path = cfg.get("path", "assets/branding/logo.png")
         if not os.path.exists(logo_path):
             logger.warning(
-                f"logo_watermark.enabled=true tapi file '{logo_path}' tidak ditemukan -- "
-                f"video dibuat TANPA logo. Pastikan file logo ada di path tersebut."
+                f"logo_watermark.enabled=true tapi file '{logo_path}' tidak ditemukan."
             )
             return None
 
@@ -1143,26 +876,6 @@ class VideoCreator:
             return None
 
     def _loudness_normalize_track(self, input_path):
-        """
-        Loudness-normalize (EBU R128 via ffmpeg 'loudnorm', target -14 LUFS
-        -- standar loudness umum platform streaming) file audio ke file
-        temp baru. Return path file yang sudah dinormalisasi.
-
-        KENAPA loudnorm, BUKAN peak-normalize (moviepy AudioNormalize)?
-        Track vokal nasheed ASLI (bukan nada sinus uji) punya DINAMIKA --
-        ada bagian pelan (jeda antar kata, nada sustain lembut) dan bagian
-        keras. Peak-normalize cuma menyamakan titik PALING KERAS ke 0dB,
-        tapi rata-rata loudness bagian yang MAYORITAS pelan tetap kedengaran
-        pelan secara persepsi -- inilah kemungkinan besar penyebab kenapa
-        volume 0.25-0.35 masih nyaris tidak terdengar untuk track vokal
-        asli, padahal di uji coba nada sinus (tanpa dinamika) terlihat
-        sangat efektif. loudnorm menormalisasi LOUDNESS RATA-RATA
-        (integrated LUFS), jauh lebih konsisten untuk konten vokal nyata.
-
-        Fail-open: kalau ffmpeg loudnorm gagal, return path ASLI (tidak
-        dinormalisasi) -- video tetap dibuat, musik latar mungkin lebih
-        pelan dari seharusnya, tapi TIDAK sampai video gagal total.
-        """
         output_path = self.temp_dir / f"bg_normalized_{Path(input_path).stem}.wav"
         try:
             cmd = [
@@ -1174,29 +887,15 @@ class VideoCreator:
             result = subprocess.run(cmd, capture_output=True, timeout=60)
             if result.returncode != 0 or not output_path.exists():
                 logger.warning(
-                    f"ffmpeg loudnorm gagal untuk {input_path} (exit {result.returncode}), "
-                    f"pakai file asli tanpa normalisasi loudness."
+                    f"ffmpeg loudnorm gagal untuk {input_path}, pakai file asli."
                 )
                 return input_path
             return output_path
         except Exception as e:
-            logger.warning(f"Gagal jalankan ffmpeg loudnorm untuk {input_path} ({e}), pakai file asli tanpa normalisasi.")
+            logger.warning(f"Gagal jalankan ffmpeg loudnorm untuk {input_path} ({e}), pakai file asli.")
             return input_path
 
     def _estimate_reading_duration(self, text, language="id"):
-        """
-        Estimasi berapa lama teks ini perlu ditampilkan di layar supaya
-        nyaman dibaca (dipakai untuk variant="text_only", pengganti durasi
-        dari file audio TTS yang tidak ada di variant ini).
-
-        Formula: jumlah kata / kecepatan baca (kata/menit) + padding tetap.
-        Kecepatan baca SENGAJA dibuat konservatif (lebih lambat dari
-        kecepatan baca fokus normal ~200-250 wpm) karena ini dibaca sambil
-        scroll di HP, bukan membaca santai -- orang butuh waktu ekstra
-        untuk sekadar MENYADARI teks baru muncul sebelum mulai membaca.
-        Ada juga batas minimum mutlak per-scene supaya teks pendek tidak
-        berkedip terlalu cepat untuk sempat dibaca sama sekali.
-        """
         tts_cfg = self.video_config.get("tts", {})
         reading_wpm = tts_cfg.get("text_only_reading_wpm", 170)
         padding_sec = tts_cfg.get("text_only_reading_padding_sec", 0.7)
@@ -1207,55 +906,19 @@ class VideoCreator:
         return max(min_duration, duration)
 
     def create_video(self, script_data, voiceover_segments=None, language="id", variant="voice"):
-        """
-        Merakit video Shorts (1080x1920) dengan strategi HEMAT MEMORI:
-        render tiap scene SATU PER SATU ke file mp4 kecil sendiri-sendiri
-        (tutup semua objek clip segera setelah selesai), baru di akhir
-        gabungkan semua scene jadi 1 video final pakai ffmpeg concat
-        demuxer (stream-copy, nyaris tanpa overhead memori/CPU tambahan
-        karena semua scene sudah pakai codec/resolusi/fps yang sama persis).
-
-        Versi SEBELUMNYA menahan SEMUA scene (background + subtitle) di
-        memori sekaligus lewat 1 CompositeVideoClip raksasa sebelum
-        write_videofile -- ini yang diduga kuat jadi penyebab OOM kill
-        (exit code -9) berulang, apalagi kalau banyak scene/footage
-        beresolusi tinggi. Dengan render per-scene, paling banyak cuma
-        1 scene yang aktif di memori kapan pun.
-
-        voiceover_segments: list path .mp3 per scene (WAJIB untuk
-        variant="voice", diabaikan untuk variant="text_only"). Durasi tiap
-        scene diukur LANGSUNG dari file audio asli (bukan estimasi AI)
-        supaya subtitle & visual selalu sinkron persis dengan narasi.
-
-        variant: "voice" (default, narasi diucapkan TTS) ATAU "text_only"
-        (tanpa suara narator -- teks ditampilkan lebih besar/prominent di
-        layar, musik latar dibesarkan volumenya jadi elemen audio utama,
-        durasi tiap scene dihitung dari estimasi kecepatan baca lewat
-        _estimate_reading_duration()).
-        """
         logger.info(f"Merakit video final ({language.upper()}, variant={variant})...")
         self._cleanup_old_outputs()
 
         scenes = script_data.get("scenes", [])
         if variant == "voice" and not voiceover_segments:
-            raise ValueError("voiceover_segments kosong -- tidak ada audio untuk dirakit jadi video (variant='voice').")
+            raise ValueError("voiceover_segments kosong -- tidak ada audio untuk dirakit (variant='voice').")
         if variant == "text_only" and not scenes:
-            raise ValueError("scenes kosong -- tidak ada apapun untuk dirakit jadi video (variant='text_only').")
+            raise ValueError("scenes kosong -- tidak ada apapun untuk dirakit (variant='text_only').")
 
         fps = self.video_config.get("fps", 30)
         downloaded_footage_paths = []
         scene_video_paths = []
 
-        # --- Musik latar (nasheed vokal-only) -- OPT-IN via config.yaml:
-        # video_creator.background_audio_enabled: true. Dimuat SEKALI di
-        # sini (bukan per-scene), lalu dipotong per-scene berdasarkan
-        # cursor waktu berjalan (lihat _get_background_audio_slice) supaya
-        # terdengar menyambung setelah scene-scene di-concat.
-        #
-        # variant="text_only": musik latar BUKAN cuma opsional pemanis --
-        # ini SATU-SATUNYA elemen audio (tidak ada narasi TTS), jadi
-        # dipaksa aktif & volumenya dibesarkan jauh di atas default mode
-        # suara (lihat background_audio_volume_text_only).
         if variant == "text_only":
             background_audio_enabled = True
             background_audio_volume = self.video_config.get("background_audio_volume_text_only", 0.7)
@@ -1270,12 +933,7 @@ class VideoCreator:
         if background_audio_enabled:
             bg_track_path = self._pick_background_audio_path()
             if bg_track_path is None:
-                logger.warning(
-                    f"background_audio_enabled=true tapi tidak ada file audio di "
-                    f"{self._background_audio_dir()} -- video dibuat TANPA musik latar. "
-                    f"Isi folder itu dengan track nasheed vokal-only berlisensi jelas "
-                    f"untuk pemakaian komersial (lihat catatan lisensi di config.yaml.example)."
-                )
+                logger.warning("background_audio_enabled=true tapi tidak ada file audio di assets/music/.")
             else:
                 try:
                     normalized_path = self._loudness_normalize_track(bg_track_path)
@@ -1284,10 +942,9 @@ class VideoCreator:
                         bg_track_full = bg_track_full.with_effects(
                             [afx.AudioLoop(duration=self._MAX_BACKGROUND_AUDIO_DURATION)]
                         )
-                    logger.info(f"Musik latar dipakai untuk video ini: {bg_track_path.name} (loudness-normalized -14 LUFS).")
+                    logger.info(f"Musik latar dipakai: {bg_track_path.name}")
                 except Exception as e:
-
-                    logger.warning(f"Gagal load track musik latar {bg_track_path} ({e}), video dibuat TANPA musik latar (fail-open).")
+                    logger.warning(f"Gagal load track musik latar {bg_track_path} ({e}).")
                     bg_track_full = None
 
         self._log_available_memory("sebelum mulai render per-scene")
@@ -1311,15 +968,6 @@ class VideoCreator:
                 narration_text_for_duration = scene.get("narration", "").strip()
                 scene_duration = self._estimate_reading_duration(narration_text_for_duration, language)
 
-            # YouTube 2026 punya "visual uniqueness filter" yang menurunkan
-            # ranking video yang pakai stock footage generik sama seperti
-            # ribuan kreator AI-content lain. Supaya visual channel ini
-            # tidak 100% Pexels, sebagian scene SENGAJA coba gambar AI
-            # (unik per-generate) DULUAN -- rasio diatur lewat config,
-            # default 35%. TAPI kalau gambar AI gagal (mis. kuota API habis),
-            # Pexels TETAP dicoba sebagai fallback -- bukan di-skip permanen
-            # seperti versi sebelumnya, yang bikin scene jatuh ke ColorClip
-            # gelap padahal Pexels-nya sendiri sehat-sehat saja.
             ai_image_ratio = self.video_config.get("ai_image_ratio", 0.35)
             force_ai_image = random.random() < ai_image_ratio
 
@@ -1330,23 +978,16 @@ class VideoCreator:
             is_static_image = False
             ai_image_already_tried = False
 
-            # 1. Kalau kena dadu "visual uniqueness": coba gambar AI DULUAN.
             if force_ai_image:
-                logger.info(f"Scene {idx}: coba gambar AI (Gemini) duluan untuk visual uniqueness...")
+                logger.info(f"Scene {idx}: coba gambar AI (Gemini) duluan...")
                 bg_clip = self._try_load_ai_image_clip(visual_prompt, language, scene_duration, downloaded_footage_paths)
                 ai_image_already_tried = True
                 if bg_clip is not None:
                     clip_loaded = True
                     is_static_image = True
                 else:
-                    logger.warning(f"Scene {idx}: gambar AI gagal/tidak tersedia, fallback ke Pexels (bukan skip permanen).")
+                    logger.warning(f"Scene {idx}: gambar AI gagal, fallback ke Pexels.")
 
-            # 2. Foto Pexels (paling reliable -- file kecil, hampir tidak pernah
-            #    korup, kualitas umumnya lebih baik/terang dari klip video stock).
-            #    Ini jalur utama kalau tidak kena dadu AI, ATAU fallback kalau
-            #    AI di atas gagal. Tetap pakai visual_prompt spesifik per-scene
-            #    (bukan kata kunci generik), sesuai kebijakan YouTube soal
-            #    "inauthentic content"/"slideshow tanpa narasi".
             if not clip_loaded:
                 photo_path = self.download_stock_photo(visual_prompt)
                 if photo_path:
@@ -1366,9 +1007,8 @@ class VideoCreator:
                         else:
                             logger.warning(f"Foto Pexels {photo_path} hasil crop salah ukuran {cropped.size}.")
                     except Exception as e:
-                        logger.warning(f"Gagal proses foto Pexels ({e}), coba video Pexels sebagai gantinya.")
+                        logger.warning(f"Gagal proses foto Pexels ({e}), coba video Pexels.")
 
-            # 3. Fallback: video Pexels (kalau foto tidak ketemu/gagal)
             footage_path = None
             if not clip_loaded:
                 try:
@@ -1376,7 +1016,7 @@ class VideoCreator:
                     if footage_path:
                         downloaded_footage_paths.append(footage_path)
                 except Exception as e:
-                    logger.warning(f"download_stock_footage gagal tak terduga ({e}), pakai fallback berikutnya.")
+                    logger.warning(f"download_stock_footage gagal tak terduga ({e}).")
                     footage_path = None
 
             if not clip_loaded and footage_path and os.path.exists(footage_path):
@@ -1385,25 +1025,11 @@ class VideoCreator:
                     raw_clip_to_close = raw_clip
 
                     if not self._is_footage_playable(raw_clip):
-                        logger.warning(
-                            f"Footage {footage_path} lolos download tapi TIDAK bisa dibaca penuh "
-                            f"(korup/terpotong) -- ini terdeteksi lewat validasi frame, bukan cuma "
-                            f"cek ukuran byte. Coba gambar AI sebagai gantinya."
-                        )
+                        logger.warning(f"Footage {footage_path} TIDAK bisa dibaca penuh. Coba gambar AI.")
                     else:
                         if raw_clip.duration < scene_duration:
                             raw_clip = raw_clip.with_effects([vfx.Loop(duration=scene_duration)])
 
-                        # PENTING: Resize dulu, BARU hitung titik pusat crop dari
-                        # ukuran HASIL resize -- bukan ukuran asli sebelum resize.
-                        # Bug sebelumnya: x_center/y_center dihitung dari
-                        # raw_clip.w/h (ukuran SEBELUM resize), padahal Resize
-                        # sudah mengubah ukuran frame di step yang sama. Untuk
-                        # source dengan rasio jauh dari target (mis. video
-                        # landscape 640x360 di-resize jadi ~3413x1920), titik
-                        # pusat yang salah bikin crop menghasilkan area nyaris
-                        # kosong/di luar frame -- inilah salah satu penyebab
-                        # video "layar hitam" walau download sukses.
                         resized_clip = raw_clip.with_effects([Resize(height=1920)])
                         bg_clip = resized_clip.with_effects([
                             Crop(
@@ -1414,26 +1040,16 @@ class VideoCreator:
                         ])
                         bg_clip = bg_clip.subclipped(0, scene_duration)
 
-                        # Sanity check terakhir: pastikan hasil crop benar-benar
-                        # 1080x1920 penuh -- kalau tidak (mis. bug lain yang
-                        # belum ketahuan), JANGAN dipakai, jatuh ke fallback
-                        # berikutnya alih-alih diam-diam pakai clip rusak.
                         if bg_clip.size != (1080, 1920):
-                            logger.warning(
-                                f"Footage {footage_path} hasil crop ukurannya salah {bg_clip.size} "
-                                f"(harusnya 1080x1920) -- coba gambar AI sebagai gantinya."
-                            )
+                            logger.warning(f"Footage {footage_path} hasil crop ukurannya salah {bg_clip.size}.")
                         else:
                             clip_loaded = True
                             logger.info(f"Footage Pexels valid & terpakai untuk scene {idx}: {footage_path}")
                 except Exception as e:
-                    logger.warning(f"Error memproses footage ({e}), coba gambar AI sebagai gantinya.")
+                    logger.warning(f"Error memproses footage ({e}), coba gambar AI.")
 
-            # 4. Kalau semua sumber footage/foto gagal, coba gambar AI (kalau
-            #    belum dicoba di langkah 1 -- tidak perlu ulang percobaan yang
-            #    sudah pasti gagal, mis. karena kuota API habis).
             if not clip_loaded and not ai_image_already_tried:
-                logger.info(f"Scene {idx}: mencoba generate gambar AI (Gemini) sebagai fallback terakhir...")
+                logger.info(f"Scene {idx}: mencoba generate gambar AI sebagai fallback terakhir...")
                 bg_clip = self._try_load_ai_image_clip(visual_prompt, language, scene_duration, downloaded_footage_paths)
                 if bg_clip is not None:
                     clip_loaded = True
@@ -1443,16 +1059,11 @@ class VideoCreator:
                 bg_color = random.choice([(25, 30, 60), (40, 20, 50), (20, 40, 40)])
                 bg_clip = ColorClip(size=(1080, 1920), color=bg_color, duration=scene_duration)
 
-            # Jaring pengaman teknis: kalau footage/gambar yang kepakai tetap
-            # gelap (dari sumber apapun -- Pexels, gambar AI, prompt lama yang
-            # belum ke-refresh), naikkan kecerahan otomatis. Ini backstop di
-            # LUAR kendali prompt AI, supaya video tidak pernah terlihat
-            # "layar hitam" apapun penyebabnya di hulu.
             try:
                 sample_frame = bg_clip.get_frame(min(0.3, scene_duration / 2))
                 if sample_frame.size == 0:
-                    raise ValueError(f"Frame kosong (shape={sample_frame.shape}) -- kemungkinan bug crop/resize.")
-                avg_brightness = sample_frame.mean()  # 0-255, kasar tapi cukup buat deteksi "gelap total"
+                    raise ValueError(f"Frame kosong (shape={sample_frame.shape}).")
+                avg_brightness = sample_frame.mean()
                 if avg_brightness < 60:
                     boost = min(4.0, 90 / max(avg_brightness, 1))
                     logger.warning(
@@ -1463,30 +1074,19 @@ class VideoCreator:
                         lambda frame: (frame.astype("float32") * boost).clip(0, 255).astype("uint8")
                     )
             except Exception as e:
-                logger.warning(f"Scene {idx}: gagal cek/koreksi kecerahan ({e}), lanjut apa adanya.")
+                logger.warning(f"Scene {idx}: gagal cek/koreksi kecerahan ({e}).")
 
             scene_layers = [bg_clip]
 
-            # 2. Subtitle Rendering
             try:
                 sub_config = self.video_config.get("subtitles", {})
                 raw_text = scene.get("narration", "").strip()
 
                 font_size = sub_config.get("font_size", 60)
                 if variant == "text_only":
-                    # Teks jadi KONTEN UTAMA (bukan subtitle pendamping suara),
-                    # jadi dibuat lebih besar & lebih menonjol -- faktor
-                    # pembesaran configurable, default 1.35x.
                     font_size = int(font_size * sub_config.get("text_only_font_size_multiplier", 1.35))
                 text_max_width = sub_config.get("max_width", 900)
                 font_path = resolve_font_path(sub_config.get("font"))
-                if not font_path:
-                    logger.warning(
-                        "Tidak menemukan file font .ttf (config 'subtitles.font' "
-                        "atau font default sistem). Subtitle memakai wrap kasar "
-                        "per-5-kata -- untuk hasil rapi, set path font eksplisit "
-                        "di config.yaml -> video_creator.subtitles.font"
-                    )
 
                 wrapped_text = wrap_text_pixel_accurate(raw_text, font_path, font_size, text_max_width)
 
@@ -1521,22 +1121,11 @@ class VideoCreator:
                 logger.warning(f"Gagal membuat subtitle TextClip: {e}")
 
             if logo_base_clip is not None:
-                # Ditambahkan PALING TERAKHIR ke scene_layers supaya logo
-                # selalu tampil di lapisan PALING ATAS (di atas subtitle
-                # sekalipun), konsisten di setiap scene/video.
                 scene_layers.append(logo_base_clip.with_duration(scene_duration))
 
             scene_composite = CompositeVideoClip(scene_layers, size=(1080, 1920)).with_duration(scene_duration)
 
             if variant == "text_only":
-                # Tidak ada narasi TTS -- musik latar (kalau ada) jadi
-                # SATU-SATUNYA audio, volume sudah di-boost di atas
-                # (background_audio_volume_text_only). Kalau tidak ada
-                # track musik sama sekali, buat audio SENYAP eksplisit
-                # (bukan skip with_audio() sama sekali) supaya semua scene
-                # tetap punya stream audio AAC yang konsisten untuk
-                # ffmpeg concat nanti -- beberapa pemutar/pipeline lebih
-                # rewel soal file video tanpa stream audio sama sekali.
                 if bg_track_full is not None:
                     try:
                         bg_slice = self._get_background_audio_slice(bg_track_full, bg_cursor, scene_duration)
@@ -1547,7 +1136,7 @@ class VideoCreator:
                             bg_slice = bg_slice.with_effects([afx.AudioFadeOut(1.5)])
                         scene_composite = scene_composite.with_audio(bg_slice)
                     except Exception as e:
-                        logger.warning(f"Scene {idx}: gagal mixing musik latar utk variant text_only ({e}), pakai audio senyap.")
+                        logger.warning(f"Scene {idx}: gagal mixing musik latar.")
                         silent = AudioClip(lambda t: [0, 0], duration=scene_duration, fps=44100)
                         scene_composite = scene_composite.with_audio(silent)
                 else:
@@ -1564,11 +1153,7 @@ class VideoCreator:
                     final_audio = CompositeAudioClip([seg_audio, bg_slice])
                     scene_composite = scene_composite.with_audio(final_audio)
                 except Exception as e:
-                    # Fail-open: kalau mixing musik latar scene ini gagal
-                    # (mis. track lebih pendek dari perkiraan), tetap pakai
-                    # narasi saja untuk scene ini -- jangan sampai satu
-                    # error musik latar menggagalkan seluruh video.
-                    logger.warning(f"Scene {idx}: gagal mixing musik latar ({e}), scene ini pakai narasi saja.")
+                    logger.warning(f"Scene {idx}: gagal mixing musik latar ({e}).")
                     scene_composite = scene_composite.with_audio(seg_audio)
             else:
                 scene_composite = scene_composite.with_audio(seg_audio)
@@ -1603,8 +1188,6 @@ class VideoCreator:
                     except: pass
                 raise
             finally:
-                # PENTING: tutup semua objek clip scene ini SEKARANG, sebelum
-                # lanjut ke scene berikutnya -- ini kunci penghematan memori.
                 scene_composite.close()
                 if raw_clip_to_close:
                     try: raw_clip_to_close.close()
@@ -1614,10 +1197,6 @@ class VideoCreator:
 
             self._log_available_memory(f"setelah render scene {idx}")
 
-        # Tutup track musik latar (dibuka SEKALI di luar loop, dipakai
-        # lintas-scene) & catat ke riwayat rotasi -- hanya kalau video
-        # berhasil dirender sampai sini (jalur exception di atas sudah
-        # menutupnya sendiri sebelum re-raise).
         if bg_track_full is not None:
             try: bg_track_full.close()
             except Exception: pass
@@ -1628,7 +1207,6 @@ class VideoCreator:
             try: logo_base_clip.close()
             except Exception: pass
 
-        # Bersihkan file footage/gambar AI & voiceover segmen yang sudah dipakai
         for fp in downloaded_footage_paths:
             try: Path(fp).unlink(missing_ok=True)
             except Exception: pass
@@ -1637,12 +1215,8 @@ class VideoCreator:
             except Exception: pass
 
         if not scene_video_paths:
-            raise ValueError("Tidak ada scene yang berhasil di-render -- video gagal dibuat.")
+            raise ValueError("Tidak ada scene yang berhasil di-render.")
 
-        # 3. Gabungkan semua scene mp4 jadi 1 video final PAKAI FFMPEG CONCAT
-        # DEMUXER (bukan moviepy) -- ini stream-copy murni (tidak re-encode
-        # ulang, karena semua scene sudah pakai codec/resolusi/fps yang sama
-        # persis), jadi cepat dan nyaris tidak menambah beban memori.
         output_filename = f"video_{language}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
         output_path = self.output_dir / output_filename
         concat_list_path = self.temp_dir / f"concat_list_{language}.txt"
