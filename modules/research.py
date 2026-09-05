@@ -51,17 +51,11 @@ class ContentResearcher:
                 "GEMINI_API_KEY tidak diset/masih placeholder di environment. "
                 "Riset topik akan pakai bank topik statis fallback."
             )
-        elif not api_key.startswith("AIza") or len(api_key) < 30:
-            # Validasi FORMAT (bukan validasi ke server) -- API key Gemini
-            # asli SELALU diawali "AIza" dan panjangnya ~39 karakter. Kalau
-            # tidak cocok, key ini hampir pasti rusak/salah SEBELUM sempat
-            # dikirim ke API sama sekali -- error 401
-            # "ACCESS_TOKEN_TYPE_UNSUPPORTED" yang muncul di log biasanya
-            # PERSIS gejala dari kasus ini.
+        elif not (api_key.startswith("AIza") or api_key.startswith("AQ")) or len(api_key) < 20:
             logger.error(
                 f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
-                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
-                f"'AIza' dan sekitar 39 karakter. Kemungkinan penyebab: (1) ada "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini/Google Cloud biasanya diawali "
+                f"'AIza' atau 'AQ'. Kemungkinan penyebab: (1) ada "
                 f"whitespace/newline tersembunyi saat copy-paste ke Railway Variables, "
                 f"(2) key yang ter-paste salah/tidak lengkap, atau (3) key sudah "
                 f"di-revoke/diganti di Google AI Studio tapi Railway belum di-update. "
@@ -220,18 +214,12 @@ text before or after), where each item has this exact shape:
             response = self._gemini_client.models.generate_content(
                 model=self.gemini_model_name,
                 contents=prompt,
-                # AFC (automatic function calling) tidak relevan -- kita tidak
-                # pakai tools/function calling sama sekali. Matikan eksplisit
-                # supaya tidak muncul warning "AFC is enabled" di log (noise,
-                # tidak memengaruhi hasil, tapi bikin log kotor).
                 config=genai_types.GenerateContentConfig(
                     automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True)
                 ),
             )
             text = (response.text or "").strip()
 
-            # Jaga-jaga kalau Gemini tetap membungkus dengan ```json ... ```
-            # walau sudah diminta tidak, supaya json.loads tidak meledak.
             if text.startswith("```"):
                 text = text.strip("`").strip()
                 if text.lower().startswith("json"):
@@ -245,14 +233,6 @@ text before or after), where each item has this exact shape:
             for item in data:
                 if isinstance(item, dict) and item.get("topic"):
                     topic_text = item["topic"].strip()
-                    # Jaring pengaman KODE (bukan cuma instruksi prompt) --
-                    # kalau Gemini tetap balikin topic sepanjang kalimat
-                    # (mengabaikan instruksi "3-7 kata MAKSIMAL" di atas)
-                    # ATAU topic-nya mengandung tanda baca mid-phrase (koma,
-                    # titik) yang merusak grammar saat disisipkan MID-
-                    # SENTENCE di template fallback script_generator.py,
-                    # bersihkan di sini supaya template fallback selalu
-                    # dapat frasa bersih.
                     topic_text = topic_text.rstrip(".!?")
                     topic_text = re.sub(r"[,;:]", "", topic_text)
                     words = topic_text.split()
@@ -284,17 +264,7 @@ text before or after), where each item has this exact shape:
     def _static_fallback_topics(self, language):
         """
         Bank topik STATIS/curated -- dipakai HANYA kalau Gemini tidak
-        tersedia/gagal. get_unique_topic() di main.py menyimpan histori 30
-        topik terakhir dan menghindari topik yang berulang, jadi bank ini
-        perlu cukup banyak variasi -- kalau cuma 2 topik per bahasa, setelah
-        2x jalan "unused_topics" akan kosong dan sistem muter di topik yang
-        itu-itu saja.
-
-        CATATAN NICHE ISLAM: topik-topik di bawah SENGAJA hanya berupa TEMA/
-        HIKMAH UMUM (sabar, syukur, tawakal, dll), TANPA menyebut nomor ayat
-        Al-Qur'an atau hadits spesifik -- sesuai keputusan untuk menghindari
-        risiko AI salah kutip referensi keagamaan. script_generator.py yang
-        menulis narasi lengkap dari topik ini juga diberi instruksi yang sama.
+        tersedia/gagal.
         """
         if language == "id":
             return [
@@ -386,7 +356,7 @@ text before or after), where each item has this exact shape:
                     "engagement_score": 9.4
                 },
             ]
-        # Simpan hasil riset
+
 if __name__ == "__main__":
     researcher = ContentResearcher()
     print("--- INDONESIA ---")
