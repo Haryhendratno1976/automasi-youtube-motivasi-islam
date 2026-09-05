@@ -23,6 +23,13 @@ class VideoUploader:
         # pengaman ekstra -- upload akan DIBATALKAN otomatis kalau token
         # yang dipakai ternyata mengarah ke channel ID yang tidak sesuai.
         self.expected_channel_ids = {}
+        # Alasan spesifik kegagalan upload YOUTUBE TERAKHIR -- diisi di
+        # tiap titik kegagalan upload_to_youtube(), dibaca oleh
+        # review_actions.py supaya pesan di Telegram BISA langsung bilang
+        # alasan sebenarnya (kredensial hilang/salah channel/dll), bukan
+        # cuma "Upload gagal" generik yang mengharuskan cek log Railway
+        # setiap kali.
+        self.last_youtube_error = None
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
@@ -73,6 +80,10 @@ class VideoUploader:
                     f"dan env var berikut kosong/tidak diset: {', '.join(missing)}. "
                     f"Upload YouTube {prefix} dibatalkan."
                 )
+                self.last_youtube_error = (
+                    f"Env var berikut KOSONG/tidak diset di Railway: {', '.join(missing)}. "
+                    f"Isi di Railway -> Variables untuk service yang menjalankan main.py."
+                )
                 return None
 
             token_data = {
@@ -85,12 +96,14 @@ class VideoUploader:
                 creds = Credentials.from_authorized_user_info(token_data)
             except Exception as e:
                 logger.error(f"Gagal membuat kredensial dari Environment Variables {prefix}: {e}")
+                self.last_youtube_error = f"Gagal membuat kredensial dari env var {prefix}: {e}"
                 return None
 
         try:
             return build("youtube", "v3", credentials=creds)
         except Exception as e:
             logger.error(f"Gagal membangun service YouTube untuk bahasa {language}: {e}")
+            self.last_youtube_error = f"Gagal membangun service YouTube ({language}): {e}"
             return None
 
     def _verify_channel(self, youtube, language):
@@ -129,18 +142,31 @@ class VideoUploader:
     def upload_to_youtube(self, video_path, title, description, language="id", tags=None):
         """Mengunggah video MP4 ke YouTube Shorts."""
         logger.info(f"Mempersiapkan upload ke YouTube ({language.upper()})...")
+        self.last_youtube_error = None  # reset tiap panggilan baru
 
         try:
             youtube = self.get_youtube_service(language)
         except Exception as e:
             logger.error(f"Gagal tak terduga saat menyiapkan service YouTube {language.upper()}: {e}")
+            self.last_youtube_error = f"Gagal menyiapkan service YouTube: {e}"
             youtube = None
 
         if not youtube:
             logger.error(f"Upload YouTube {language.upper()} dibatalkan karena kredensial tidak valid/ditemukan.")
+            if not self.last_youtube_error:
+                self.last_youtube_error = (
+                    f"Kredensial YouTube {language.upper()} tidak valid/tidak ditemukan -- "
+                    f"cek token_{language}.json atau env var YT_{language.upper()}_CLIENT_ID/"
+                    f"CLIENT_SECRET/REFRESH_TOKEN di Railway Variables."
+                )
             return None
 
         if not self._verify_channel(youtube, language):
+            self.last_youtube_error = (
+                f"Channel MISMATCH -- token yang dipakai mengarah ke channel YouTube yang "
+                f"BEDA dari yang diharapkan untuk bahasa {language.upper()}. Cek "
+                f"expected_channel_id di config.yaml vs token yang sedang aktif."
+            )
             return None
 
         # YouTube API batasi total panjang tags gabungan ~500 karakter --
@@ -189,6 +215,7 @@ class VideoUploader:
 
         except Exception as e:
             logger.error(f"Gagal mengunggah video ke YouTube ({language}): {e}")
+            self.last_youtube_error = f"Error saat proses upload ke YouTube: {e}"
             return None
 
     def upload_to_facebook_reels(self, video_path, description, language="id"):
