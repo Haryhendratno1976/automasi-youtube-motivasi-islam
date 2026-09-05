@@ -178,7 +178,7 @@ video_creator:
   # TERDENGAR dibanding sebelumnya -- kalau dulu 0.25-0.35 nyaris tidak
   # kedengaran, sekarang seharusnya sudah jelas terdengar. Coba mulai dari
   # 0.25, dengarkan hasilnya, naik/turunkan dari situ.
-  background_audio_volume: 0.25
+  background_audio_volume: 0.35
 
   # ============================================================
   # VARIAN VIDEO TEKS-ONLY (tanpa suara narator)
