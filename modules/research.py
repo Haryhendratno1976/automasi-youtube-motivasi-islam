@@ -10,6 +10,7 @@ import json
 import logging
 import yaml
 import glob
+import re
 from datetime import datetime
 
 try:
@@ -35,7 +36,11 @@ class ContentResearcher:
 
         self._gemini_ready = False
         self._gemini_client = None
-        api_key = os.environ.get("GEMINI_API_KEY")
+        # .strip() PENTING -- whitespace/newline tersembunyi dari copy-paste
+        # ke Railway Variables adalah penyebab UMUM error 401
+        # "ACCESS_TOKEN_TYPE_UNSUPPORTED" yang membingungkan (key jadi
+        # tidak valid tapi lolos validasi lama karena cuma cek `not api_key`).
+        api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
         if genai is None:
             logger.warning(
                 "Library 'google-genai' belum terinstall (tambahkan ke requirements.txt). "
@@ -45,6 +50,24 @@ class ContentResearcher:
             logger.warning(
                 "GEMINI_API_KEY tidak diset/masih placeholder di environment. "
                 "Riset topik akan pakai bank topik statis fallback."
+            )
+        elif not api_key.startswith("AIza") or len(api_key) < 30:
+            # Validasi FORMAT (bukan validasi ke server) -- API key Gemini
+            # asli SELALU diawali "AIza" dan panjangnya ~39 karakter. Kalau
+            # tidak cocok, key ini hampir pasti rusak/salah SEBELUM sempat
+            # dikirim ke API sama sekali -- error 401
+            # "ACCESS_TOKEN_TYPE_UNSUPPORTED" yang muncul di log biasanya
+            # PERSIS gejala dari kasus ini.
+            logger.error(
+                f"GEMINI_API_KEY tampak TIDAK VALID (panjang: {len(api_key)} karakter, "
+                f"awalan: '{api_key[:6]}...') -- API key Gemini asli biasanya diawali "
+                f"'AIza' dan sekitar 39 karakter. Kemungkinan penyebab: (1) ada "
+                f"whitespace/newline tersembunyi saat copy-paste ke Railway Variables, "
+                f"(2) key yang ter-paste salah/tidak lengkap, atau (3) key sudah "
+                f"di-revoke/diganti di Google AI Studio tapi Railway belum di-update. "
+                f"Cek ulang nilai GEMINI_API_KEY di Railway -> Variables (hapus & "
+                f"paste ulang dari aistudio.google.com). Riset topik akan pakai bank "
+                f"topik statis fallback sampai ini diperbaiki."
             )
         else:
             try:
@@ -173,6 +196,19 @@ what's culturally relevant, currently trending, or top-of-mind for audiences
 in that region -- don't give generic topics that ignore the target market.
 Avoid generic topics -- make each one a specific angle or story hook.
 
+CRITICAL FORMAT RULE for the "topic" field: it must be a SHORT NOUN PHRASE,
+3-6 words MAXIMUM (e.g. "sabar menghadapi ujian hidup", "bersyukur di
+tengah kekurangan", "tawakal setelah berusaha") -- a LABEL for the theme,
+NOT a full sentence, NOT a claim, and NOT a contrastive statement. This
+short phrase gets embedded as a noun-phrase INSIDE other sentences
+downstream (e.g. "Banyak yang salah paham soal {{topic}}..."), so it must
+grammatically work as a simple noun phrase there.
+WRONG (this is a claim/statement, not a noun phrase): "Tawakal setelah
+berusaha maksimal, bukan pengganti usaha"
+RIGHT (same theme, as a short noun phrase): "tawakal setelah berusaha"
+Put any nuance, contrast, or specific angle in "hook_style" instead, never
+in "topic" itself.
+
 Respond with ONLY a pure JSON array (no markdown code fences, no explanation
 text before or after), where each item has this exact shape:
 {{
@@ -208,8 +244,26 @@ text before or after), where each item has this exact shape:
             normalized = []
             for item in data:
                 if isinstance(item, dict) and item.get("topic"):
+                    topic_text = item["topic"].strip()
+                    # Jaring pengaman KODE (bukan cuma instruksi prompt) --
+                    # kalau Gemini tetap balikin topic sepanjang kalimat
+                    # (mengabaikan instruksi "3-7 kata MAKSIMAL" di atas)
+                    # ATAU topic-nya mengandung tanda baca mid-phrase (koma,
+                    # titik) yang merusak grammar saat disisipkan MID-
+                    # SENTENCE di template fallback script_generator.py,
+                    # bersihkan di sini supaya template fallback selalu
+                    # dapat frasa bersih.
+                    topic_text = topic_text.rstrip(".!?")
+                    topic_text = re.sub(r"[,;:]", "", topic_text)
+                    words = topic_text.split()
+                    if len(words) > 8:
+                        topic_text = " ".join(words[:8])
+                        logger.warning(
+                            f"Topic dari Gemini kepanjangan ({len(words)} kata): "
+                            f"'{item['topic']}' -- dipotong jadi: '{topic_text}'"
+                        )
                     normalized.append({
-                        "topic": item["topic"],
+                        "topic": topic_text,
                         "avg_views": item.get("avg_views", "-"),
                         "duration": item.get("duration", "-"),
                         "hook_style": item.get("hook_style", ""),
